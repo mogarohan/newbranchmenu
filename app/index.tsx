@@ -78,8 +78,7 @@ export default function JoinScreen() {
   }, [r, t, token]);
   // 2. Polling for Approval (Waiting Room)
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-
+    let interval: ReturnType<typeof setInterval>;
     if (joinStatus === "pending" && tableData && sessionToken) {
       interval = setInterval(async () => {
         try {
