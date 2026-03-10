@@ -5,7 +5,7 @@ import Pusher from "pusher-js";
 Pusher.logToConsole = true;
 global.Pusher = Pusher;
 // ⚠️ CHANGE THIS TO YOUR LARAVEL URL (Local IP for testing, Domain for production)
-const BASE_URL = "https://rset-saas-api.onrender.com";
+const BASE_URL = "https://restaurant.techstrota.com";
 
 export const initEcho = (sessionToken: string) => {
   return new Echo({

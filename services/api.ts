@@ -2,7 +2,7 @@ import Constants from "expo-constants";
 
 const BASE_URL =
   Constants.expoConfig?.extra?.BASE_URL ||
-  "https://rset-saas-api.onrender.com/api";
+  "https://restaurant.techstrota.com/api";
 
 // Custom Error Class for structured error handling
 export class ApiError extends Error {
