@@ -1,6 +1,6 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { default as React, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,7 +17,9 @@ import {
 } from "react-native";
 import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
+import { initEcho } from "../../services/echo";
 import { SessionService } from "../../services/session.service";
+
 const DUMMY_MENU = [
   {
     id: 1,
@@ -64,18 +66,18 @@ export default function MenuScreen() {
     clearSession,
   } = useSession();
 
-  // 🔥 NEW UI STATE
   const [activeCategoryId, setActiveCategoryId] = useState<string | number>(
     "all",
   );
   const [searchQuery, setSearchQuery] = useState("");
-
   const [loadingMenu, setLoadingMenu] = useState(true);
 
   // Host State
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [activeGuests, setActiveGuests] = useState<any[]>([]);
   const [showRequestsModal, setShowRequestsModal] = useState(false);
+  const echoRef = useRef<any>(null);
+  const processedEventsRef = useRef<Set<string>>(new Set());
 
   // 1. Fetch Menu
   useEffect(() => {
@@ -103,43 +105,74 @@ export default function MenuScreen() {
     loadMenu();
   }, [tableData, sessionToken]);
 
-  // 2. Polling for Host (Checks for incoming join requests)
+  // 2. 🔥 WEBSOCKET: Real-time Host Approvals
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let isMounted = true;
+    const sessionId = menuData?.session?.id;
 
-    const fetchHostData = async () => {
-      if (!tableData?.tId || !sessionToken) return;
+    const setupHostListener = async () => {
+      if (!tableData?.tId || !sessionToken || !isPrimary || !sessionId) return;
 
       try {
         const res = await SessionService.getPendingRequests(
           tableData.tId,
           sessionToken,
         );
-        setPendingRequests(res.pending || []);
-        setActiveGuests(res.guests || []);
-
-        if (res.pending && res.pending.length > 0) {
-          setShowRequestsModal(true);
+        if (isMounted) {
+          setPendingRequests(res.pending || []);
+          setActiveGuests(res.guests || []);
+          if (res.pending && res.pending.length > 0) {
+            setShowRequestsModal(true);
+          }
         }
       } catch (e) {
         console.error("Failed to fetch host data", e);
       }
+
+      if (!echoRef.current) {
+        echoRef.current = initEcho(sessionToken);
+      }
+
+      const channel = echoRef.current.private(`session.${sessionId}`);
+
+      channel.listen(".GuestJoinRequested", (event: any) => {
+        if (!isMounted) return;
+
+        if (event.event_id) {
+          if (processedEventsRef.current.has(event.event_id)) return;
+          processedEventsRef.current.add(event.event_id);
+        }
+
+        if (event.guest) {
+          // 🔥 Changed from setPendingGuests to setPendingRequests, and added : any[]
+          setPendingRequests((prev: any[]) => {
+            if (prev.some((g: any) => g.id === event.guest.id)) return prev;
+            return [...prev, event.guest];
+          });
+          setShowRequestsModal(true);
+        }
+      });
     };
 
-    if (isPrimary && tableData?.tId && sessionToken) {
-      fetchHostData(); // Fetch immediately
-      interval = setInterval(fetchHostData, 5000); // Then poll every 5s
-    }
+    setupHostListener();
 
-    return () => clearInterval(interval);
-  }, [isPrimary, tableData?.tId, sessionToken]);
+    return () => {
+      isMounted = false;
+      if (echoRef.current && sessionId) {
+        echoRef.current.leave(`session.${sessionId}`);
+      }
+    };
+  }, [isPrimary, tableData?.tId, sessionToken, menuData?.session?.id]);
 
-  // 3. Handle Host Action (Approve/Reject)
+  // 3. Handle Host Action (Optimistic UI Update)
   const handleRequestResponse = async (
     id: number,
     action: "approve" | "reject",
   ) => {
     if (!sessionToken) return;
+
+    // Grab the guest before removing them from pending
+    const guestToMove = pendingRequests.find((r) => r.id === id);
 
     try {
       await SessionService.respondToRequest(id, action, sessionToken);
@@ -151,14 +184,68 @@ export default function MenuScreen() {
         }
         return updated;
       });
+
+      // 🔥 Optimistically add to active guests without needing a page refresh
+      if (action === "approve" && guestToMove) {
+        setActiveGuests((prev) => [...prev, guestToMove]);
+      }
     } catch (e) {
       console.error("Failed to respond to request", e);
+      Alert.alert("Error", "Could not process the request. Please try again.");
     }
   };
 
-  const categories = menuData?.categories || FALLBACK_CATEGORIES;
+  const handleLeaveTable = () => {
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(
+        "Are you sure you want to disconnect from this table? Your cart and session will be cleared.",
+      );
+      if (confirmed) {
+        clearSession().then(() => router.replace("/"));
+      }
+      return;
+    }
 
-  // Calculate Next Category for the UI
+    Alert.alert(
+      "Leave Table?",
+      "Are you sure you want to disconnect from this table? Your cart and session will be cleared.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Leave",
+          style: "destructive",
+          onPress: async () => {
+            await clearSession();
+            router.replace("/");
+          },
+        },
+      ],
+    );
+  };
+
+  // 🔥 NEW: Call Waiter Functionality
+  const handleCallWaiter = () => {
+    Alert.alert("Call Waiter", "Do you need a waiter at your table?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Yes, Call Waiter",
+        onPress: async () => {
+          try {
+            // Ensure this matches your SessionService implementation!
+            await SessionService.callWaiter(sessionToken);
+            Alert.alert(
+              "Success",
+              "A waiter has been notified and will be with you shortly.",
+            );
+          } catch (error) {
+            Alert.alert("Error", "Could not notify the waiter at this time.");
+          }
+        },
+      },
+    ]);
+  };
+
+  const categories = menuData?.categories || FALLBACK_CATEGORIES;
   const currentCatIndex = categories.findIndex(
     (c: any) => c.id === activeCategoryId,
   );
@@ -177,7 +264,6 @@ export default function MenuScreen() {
     ? customerName
     : menuData?.session?.host_name || "Host";
 
-  // Reusable Item Card Render Function
   const renderMenuItem = (item: any) => {
     const currentQty = cart[item.id]?.qty || 0;
     const itemPrice = parseFloat(item.price) || 0;
@@ -257,39 +343,9 @@ export default function MenuScreen() {
       </View>
     );
   };
-  // 👈 2. ADD THIS FUNCTION
-  const handleLeaveTable = () => {
-    // 🌐 Web Fallback
-    if (Platform.OS === "web") {
-      const confirmed = window.confirm(
-        "Are you sure you want to disconnect from this table? Your cart and session will be cleared.",
-      );
-      if (confirmed) {
-        clearSession().then(() => router.replace("/"));
-      }
-      return;
-    }
 
-    // 📱 iOS & Android Native Alert
-    Alert.alert(
-      "Leave Table?",
-      "Are you sure you want to disconnect from this table? Your cart and session will be cleared.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Leave",
-          style: "destructive",
-          onPress: async () => {
-            await clearSession(); // Wipes the data
-            router.replace("/"); // Sends them back to the scanner/home screen
-          },
-        },
-      ],
-    );
-  };
   return (
     <SafeAreaView style={styles.container}>
-      {/* Top App Bar */}
       <View style={styles.topBar}>
         <TouchableOpacity style={styles.iconBtn} onPress={handleLeaveTable}>
           <MaterialIcons name="exit-to-app" size={26} color={THEME.danger} />
@@ -334,28 +390,39 @@ export default function MenuScreen() {
           </View>
         </View>
 
-        {isPrimary ? (
-          <TouchableOpacity
-            style={[
-              styles.hostBadge,
-              pendingRequests.length > 0 && { backgroundColor: THEME.danger },
-            ]}
-            onPress={() => setShowRequestsModal(true)}
-          >
-            <MaterialIcons name="people" size={16} color="#FFF" />
-            <Text style={styles.hostBadgeText}>
-              {activeGuests.length + pendingRequests.length}
-            </Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={styles.iconBtn}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+          {/* 🔥 Call Waiter Bell added to the top right */}
+          <TouchableOpacity style={styles.bellBtn} onPress={handleCallWaiter}>
             <MaterialIcons
-              name="info-outline"
+              name="notifications-active"
               size={24}
-              color={THEME.textPrimary}
+              color={THEME.warning}
             />
           </TouchableOpacity>
-        )}
+
+          {isPrimary ? (
+            <TouchableOpacity
+              style={[
+                styles.hostBadge,
+                pendingRequests.length > 0 && { backgroundColor: THEME.danger },
+              ]}
+              onPress={() => setShowRequestsModal(true)}
+            >
+              <MaterialIcons name="people" size={16} color="#FFF" />
+              <Text style={styles.hostBadgeText}>
+                {activeGuests.length + pendingRequests.length}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity style={styles.iconBtn}>
+              <MaterialIcons
+                name="info-outline"
+                size={24}
+                color={THEME.textPrimary}
+              />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {loadingMenu ? (
@@ -401,7 +468,6 @@ export default function MenuScreen() {
             </View>
           </View>
 
-          {/* Search Bar */}
           <View style={styles.searchContainer}>
             <MaterialIcons
               name="search"
@@ -429,7 +495,6 @@ export default function MenuScreen() {
 
           <View style={styles.menuSection}>
             {searchQuery.trim().length > 0 ? (
-              /* STATE 1: GLOBAL SEARCH RESULTS */
               <View>
                 <Text style={styles.categoryTitle}>Search Results</Text>
                 {categories.map((cat: any) => {
@@ -463,31 +528,8 @@ export default function MenuScreen() {
                     </View>
                   );
                 })}
-
-                {categories.every(
-                  (c: any) =>
-                    c.items.filter(
-                      (i: any) =>
-                        i.name
-                          .toLowerCase()
-                          .includes(searchQuery.toLowerCase().trim()) ||
-                        (i.description &&
-                          i.description
-                            .toLowerCase()
-                            .includes(searchQuery.toLowerCase().trim())) ||
-                        (i.desc &&
-                          i.desc
-                            .toLowerCase()
-                            .includes(searchQuery.toLowerCase().trim())),
-                    ).length === 0,
-                ) && (
-                  <Text style={styles.emptySearchText}>
-                    No items found for "{searchQuery}"
-                  </Text>
-                )}
               </View>
             ) : activeCategoryId === "all" ? (
-              /* STATE 2: DISPLAY ALL CATEGORIES AS CARDS */
               <View>
                 <Text style={styles.categoryTitle}>Menu Categories</Text>
                 <View style={styles.categoryGrid}>
@@ -513,7 +555,6 @@ export default function MenuScreen() {
                 </View>
               </View>
             ) : (
-              /* STATE 3: DISPLAY SPECIFIC CATEGORY ITEMS */
               <View>
                 <TouchableOpacity
                   style={styles.backBtn}
@@ -542,13 +583,10 @@ export default function MenuScreen() {
                     </View>
                   ))}
 
-                {/* ✨ NEXT CATEGORY BUTTON ✨ */}
                 {nextCategory && (
                   <TouchableOpacity
                     style={styles.nextCategoryBtn}
-                    onPress={() => {
-                      setActiveCategoryId(nextCategory.id);
-                    }}
+                    onPress={() => setActiveCategoryId(nextCategory.id)}
                   >
                     <Text style={styles.nextCategoryBtnText}>
                       Next: {nextCategory.name}
@@ -597,7 +635,6 @@ export default function MenuScreen() {
         </View>
       )}
 
-      {/* --- HOST DASHBOARD MODAL --- */}
       <Modal visible={showRequestsModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -776,6 +813,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderRadius: 20,
   },
+  bellBtn: {
+    // 🔥 Added style for Waiter Bell
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    padding: 6,
+    borderRadius: 20,
+  },
   topBarTitle: { fontSize: 16, fontWeight: "bold", color: THEME.textPrimary },
   hostBadge: {
     flexDirection: "row",
@@ -806,8 +849,6 @@ const styles = StyleSheet.create({
   },
   bannerTitle: { fontSize: 14, fontWeight: "bold", color: THEME.success },
   bannerSub: { fontSize: 12, color: THEME.textSecondary, marginTop: 4 },
-
-  // New UI Styles
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -886,7 +927,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     fontSize: 16,
   },
-
   menuSection: { paddingHorizontal: 16 },
   card: {
     flexDirection: "row",
@@ -984,7 +1024,6 @@ const styles = StyleSheet.create({
     textAlign: "center",
     color: THEME.textPrimary,
   },
-
   cartBar: { position: "absolute", bottom: 16, left: 16, right: 16 },
   cartButton: {
     backgroundColor: THEME.primary,
@@ -1020,7 +1059,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     marginRight: 4,
   },
-
   modalOverlay: {
     flex: 1,
     backgroundColor: "rgba(28,28,30,0.5)",

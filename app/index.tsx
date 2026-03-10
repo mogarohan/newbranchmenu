@@ -1,6 +1,6 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { default as React, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   SafeAreaView,
@@ -12,8 +12,8 @@ import {
 } from "react-native";
 import { THEME } from "../constants/theme";
 import { useSession } from "../context/SessionContext";
+import { initEcho } from "../services/echo"; // 🔥 Added Echo import
 import { SessionService } from "../services/session.service";
-
 export default function JoinScreen() {
   const {
     startSession,
@@ -76,13 +76,18 @@ export default function JoinScreen() {
     };
     initTable();
   }, [r, t, token]);
-  // 2. Polling for Approval (Waiting Room)
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
+  // 2. 🔥 WEBSOCKET: Real-time Waiting Room (No more polling!)
+  const echoRef = useRef<any>(null);
+  const isMountedRef = useRef(true);
 
-    if (joinStatus === "pending" && tableData && sessionToken) {
-      interval = setInterval(async () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    let channel: any = null;
+
+    const setupWebSocket = async () => {
+      if (joinStatus === "pending" && tableData && sessionToken) {
         try {
+          // 1. One-time fetch just to get our session ID so we know which channel to listen to
           const res = await SessionService.checkSessionStatus(
             tableData.rId,
             tableData.tId,
@@ -90,37 +95,70 @@ export default function JoinScreen() {
             sessionToken,
           );
 
-          if (res.session?.join_status === "approved") {
-            setJoinStatus("approved");
-            router.replace("/(tabs)/menu");
+          const sessionId = res?.session?.id;
+          if (!sessionId) return;
+
+          // 2. Initialize Echo
+          if (!echoRef.current) {
+            echoRef.current = initEcho(sessionToken);
           }
+
+          // 3. Listen to the Host's decision instantly
+          channel = echoRef.current.private(`session.${sessionId}`);
+
+          channel.listen(".JoinRequestResponded", (event: any) => {
+            if (!isMountedRef.current) return;
+
+            if (event.status === "approved") {
+              setJoinStatus("approved");
+              router.replace("/(tabs)/menu");
+            } else if (event.status === "rejected") {
+              setJoinStatus("rejected");
+            }
+          });
         } catch (e: any) {
-          console.log(`Poll Error ${e.status}:`, e.data);
+          // 🔥 NEW: Grab the session ID even if it throws a 403!
+          const sessionId = e.data?.session?.id;
 
-          // 1. Explicitly rejected by payload
-          const isExplicitlyRejected = e.data?.join_status === "rejected";
-          // 2. Session was deactivated/deleted by the host rejecting them
-          const isInvalidSession =
+          if (
             e.status === 403 &&
-            e.data?.message?.includes("Invalid or inactive");
-          // 3. Session completely wiped from database
-          const isNotFound = e.status === 404 || e.status === 401;
+            e.data?.join_status === "pending" &&
+            sessionId
+          ) {
+            // Now we have the ID, we can connect to Pusher while waiting!
+            if (!echoRef.current) echoRef.current = initEcho(sessionToken);
+            channel = echoRef.current.private(`session.${sessionId}`);
 
-          if (isExplicitlyRejected || isInvalidSession || isNotFound) {
-            console.log(
-              "Request was rejected or session terminated. Updating UI.",
-            );
-            setJoinStatus("rejected");
-          } else if (e.data?.join_status === "approved") {
-            // Edge case safety
-            setJoinStatus("approved");
-            router.replace("/(tabs)/menu");
+            channel.listen(".JoinRequestResponded", (event: any) => {
+              if (!isMountedRef.current) return;
+              if (event.status === "approved") {
+                setJoinStatus("approved");
+                router.replace("/(tabs)/menu");
+              } else if (event.status === "rejected") {
+                setJoinStatus("rejected");
+              }
+            });
+          } else {
+            // Handle actual rejections/deletions as before
+            const isExplicitlyRejected = e.data?.join_status === "rejected";
+            if (isExplicitlyRejected || e.status === 404 || e.status === 401) {
+              setJoinStatus("rejected");
+            }
           }
         }
-      }, 3000);
-    }
+      }
+    };
 
-    return () => clearInterval(interval);
+    setupWebSocket();
+
+    return () => {
+      isMountedRef.current = false;
+      if (echoRef.current) {
+        // Clean up connection when leaving the waiting room
+        echoRef.current.disconnect();
+        echoRef.current = null;
+      }
+    };
   }, [joinStatus, sessionToken, tableData, setJoinStatus]);
   // 3. Auto-Redirect if Active/Approved
   useEffect(() => {
