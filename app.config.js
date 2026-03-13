@@ -10,12 +10,12 @@ export default {
     scheme: "restmenu",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
-
     ios: {
       supportsTablet: true,
+      bundleIdentifier: "com.techstrota.restmenu",
     },
-
     android: {
+      package: "com.techstrota.restmenu",
       adaptiveIcon: {
         backgroundColor: "#E6F4FE",
         foregroundImage: "./assets/images/android-icon-foreground.png",
@@ -24,13 +24,18 @@ export default {
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
+      intentFilters: [
+        {
+          action: "VIEW",
+          data: [{ scheme: "restmenu" }],
+          category: ["BROWSABLE", "DEFAULT"],
+        },
+      ],
     },
-
     web: {
-      output: "static",
+      output: "single",
       favicon: "./assets/images/favicon.png",
     },
-
     plugins: [
       "expo-router",
       [
@@ -40,21 +45,17 @@ export default {
           imageWidth: 200,
           resizeMode: "contain",
           backgroundColor: "#ffffff",
-          dark: {
-            backgroundColor: "#000000",
-          },
+          dark: { backgroundColor: "#000000" },
         },
       ],
     ],
-
     experiments: {
       typedRoutes: true,
       reactCompiler: true,
     },
-
-    // ✅ ADD THIS
     extra: {
-      BASE_URL: process.env.BASE_URL || "https://restaurant.techstrota.com/api",
+      BASE_URL: process.env.EXPO_PUBLIC_BASE_URL,
+      API_URL: process.env.EXPO_PUBLIC_API_URL,
     },
   },
 };

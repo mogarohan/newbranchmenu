@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { Alert, Platform } from "react-native";
 import { SessionService } from "../services/session.service";
+
 // --- TYPES ---
 export type CartItem = {
   qty: number;
@@ -40,13 +41,13 @@ type SessionContextType = {
     price?: number,
     name?: string,
   ) => void;
-  clearCart: () => void; // Added for Cart Tab
+  clearCart: () => void;
   cartTotalQty: number;
   cartTotalPrice: number;
   menuData: any;
   setMenuData: (data: any) => void;
-  orders: any[]; // Added for Orders Tab
-  setOrders: React.Dispatch<React.SetStateAction<any[]>>; // Added for Orders Tab
+  orders: any[];
+  setOrders: React.Dispatch<React.SetStateAction<any[]>>;
 };
 
 const SessionContext = createContext<SessionContextType | undefined>(undefined);
@@ -65,8 +66,6 @@ export const SessionProvider = ({
   const [isPrimary, setIsPrimary] = useState(false); // Host vs Guest
   const [cart, setCart] = useState<Record<number, CartItem>>({});
   const [menuData, setMenuData] = useState<any>(null);
-
-  // NEW: Global Orders State
   const [orders, setOrders] = useState<any[]>([]);
 
   // --- 1. LOAD PERSISTED STATE ON MOUNT ---
@@ -79,6 +78,7 @@ export const SessionProvider = ({
         const storedCart = await AsyncStorage.getItem("cart");
         const primary = await AsyncStorage.getItem("isPrimary");
         const status = await AsyncStorage.getItem("joinStatus");
+        const storedOrders = await AsyncStorage.getItem("orders"); // 🔥 NEW
 
         if (storedTable) setTableData(JSON.parse(storedTable));
         if (token) setSessionToken(token);
@@ -86,6 +86,7 @@ export const SessionProvider = ({
         if (storedCart) setCart(JSON.parse(storedCart));
         if (primary) setIsPrimary(primary === "true");
         if (status) setJoinStatus(status);
+        if (storedOrders) setOrders(JSON.parse(storedOrders)); // 🔥 NEW
       } catch (e) {
         console.error("Failed to load session from storage", e);
       } finally {
@@ -103,6 +104,7 @@ export const SessionProvider = ({
     if (sessionToken) AsyncStorage.setItem("sessionToken", sessionToken);
     AsyncStorage.setItem("customerName", customerName);
     AsyncStorage.setItem("cart", JSON.stringify(cart));
+    AsyncStorage.setItem("orders", JSON.stringify(orders)); // 🔥 NEW
     AsyncStorage.setItem("isPrimary", isPrimary ? "true" : "false");
 
     // Actively remove ghost state if status becomes null
@@ -119,6 +121,7 @@ export const SessionProvider = ({
     isPrimary,
     joinStatus,
     isReady,
+    orders, // 🔥 THIS IS THE DEPENDENCY ARRAY FIX! We added 'orders' here.
   ]);
 
   // --- 3. OPTIMIZED CART LOGIC ---
@@ -144,7 +147,6 @@ export const SessionProvider = ({
     });
   };
 
-  // NEW: Instantly clear the cart after placing an order
   const clearCart = () => setCart({});
 
   // Calculate Totals using useMemo (O(N) operation on cart items only)
@@ -182,7 +184,6 @@ export const SessionProvider = ({
     } catch (e: any) {
       console.error("Session start failed", e);
 
-      // 🔥 NEW: Cross-platform Error Popup
       const errorMessage = e.message || "Failed to start session.";
       if (Platform.OS === "web") {
         window.alert(`Error: ${errorMessage}`);
@@ -190,7 +191,7 @@ export const SessionProvider = ({
         Alert.alert("Session Error", errorMessage);
       }
 
-      throw e; // Keep throwing so the UI stops loading spinners if needed
+      throw e;
     }
   };
 
@@ -202,7 +203,6 @@ export const SessionProvider = ({
     } catch (e) {
       console.error("Failed to notify server of leave", e);
     } finally {
-      // 🔥 CRITICAL FIX: Added "tableData" to fully wipe the device's memory
       await AsyncStorage.multiRemove([
         "sessionToken",
         "customerName",
@@ -210,6 +210,7 @@ export const SessionProvider = ({
         "isPrimary",
         "joinStatus",
         "tableData",
+        "orders", // 🔥 Ensure orders clear when they leave the table
       ]);
 
       // Reset all state to completely blank
@@ -219,9 +220,10 @@ export const SessionProvider = ({
       setIsPrimary(false);
       setJoinStatus(null);
       setOrders([]);
-      setTableData(null); // 🔥 CRITICAL FIX: Unlink the old table
+      setTableData(null);
     }
   };
+
   return (
     <SessionContext.Provider
       value={{
@@ -238,13 +240,13 @@ export const SessionProvider = ({
         startSession,
         clearSession,
         updateCart,
-        clearCart, // Exported
+        clearCart,
         cartTotalQty,
         cartTotalPrice,
         menuData,
         setMenuData,
-        orders, // Exported
-        setOrders, // Exported
+        orders,
+        setOrders,
       }}
     >
       {children}

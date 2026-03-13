@@ -1,4 +1,4 @@
-import { apiCall } from "./api";
+import { apiCall, authHeaders } from "./api"; // 🔥 FIX: Import authHeaders
 
 export const SessionService = {
   validateTable: async (rId: string, tId: string, token: string) => {
@@ -18,7 +18,6 @@ export const SessionService = {
     });
   },
 
-  // 1. Missing endpoint properly defined
   fetchMenu: async (
     rId: string,
     tId: string,
@@ -48,7 +47,6 @@ export const SessionService = {
     });
   },
 
-  // 2. Authentication token added to Host Endpoints
   getPendingRequests: async (tableId: string, sessionToken: string) => {
     return apiCall(
       `/table/${tableId}/pending-requests?session_token=${sessionToken}`,
@@ -62,7 +60,15 @@ export const SessionService = {
   ) => {
     return apiCall(`/session/${sessionId}/respond`, {
       method: "POST",
-      body: JSON.stringify({ action, session_token: sessionToken }), // Secure the action
+      body: JSON.stringify({ action, session_token: sessionToken }),
+    });
+  },
+
+  // 🔥 NEW & CRITICAL: Added the missing callWaiter method!
+  callWaiter: async (sessionToken: string) => {
+    return apiCall(`/session/call-waiter`, {
+      method: "POST",
+      headers: authHeaders(sessionToken), // Sends the Bearer token as Laravel expects
     });
   },
 };

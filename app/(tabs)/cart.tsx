@@ -2,17 +2,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import uuid from "react-native-uuid";
 import { THEME } from "../../constants/theme";
@@ -38,7 +38,6 @@ export default function CartTab() {
 
   const currency = menuData?.restaurant?.currency_symbol || "₹";
 
-  // Reset Idempotency Key if the user changes their cart intent
   useEffect(() => {
     setPendingKey(null);
   }, [cart, itemNotes, orderNote]);
@@ -57,7 +56,6 @@ export default function CartTab() {
       const idempotencyKey = pendingKey || uuid.v4().toString();
       if (!pendingKey) setPendingKey(idempotencyKey);
 
-      // Construct items array exactly as backend expects
       const payload = Object.entries(cart)
         .filter(([_, item]) => item.qty > 0)
         .map(([id, item]) => ({
@@ -66,7 +64,6 @@ export default function CartTab() {
           notes: itemNotes[Number(id)]?.trim() || null,
         }));
 
-      // Call the fixed service
       await OrderService.placeOrder(
         tableData.rId,
         tableData.tId,
@@ -76,13 +73,11 @@ export default function CartTab() {
         idempotencyKey,
       );
 
-      // Atomic cleanup on success
       clearCart();
       setItemNotes({});
       setOrderNote("");
       setPendingKey(null);
 
-      // Navigate to orders to track it
       router.push("/(tabs)/orders");
     } catch (err: any) {
       console.error("Order error:", err);
@@ -99,7 +94,6 @@ export default function CartTab() {
     setItemNotes((prev) => ({ ...prev, [id]: text }));
   };
 
-  // --- EMPTY STATE ---
   if (cartTotalQty === 0) {
     return (
       <SafeAreaView style={styles.container}>
@@ -128,7 +122,6 @@ export default function CartTab() {
     );
   }
 
-  // --- ACTIVE CART STATE ---
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
@@ -163,7 +156,6 @@ export default function CartTab() {
                     </Text>
                   </View>
 
-                  {/* Quantity Controls */}
                   <View style={styles.qtySelector}>
                     <TouchableOpacity
                       onPress={() => updateCart(id, -1, item.price, item.name)}
@@ -189,7 +181,6 @@ export default function CartTab() {
                   </View>
                 </View>
 
-                {/* Per-Item Note */}
                 <TextInput
                   style={styles.noteInput}
                   placeholder={`Note for ${item.name} (e.g. No onions)`}
@@ -218,7 +209,6 @@ export default function CartTab() {
           />
         </ScrollView>
 
-        {/* --- FLOATING CHECKOUT FOOTER --- */}
         <View style={styles.footer}>
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total</Text>
@@ -256,6 +246,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: THEME.background,
+    maxWidth: 480,
+    width: "100%",
+    alignSelf: "center",
   },
   header: {
     backgroundColor: THEME.cardBg,
@@ -266,17 +259,8 @@ const styles = StyleSheet.create({
     borderBottomColor: THEME.border,
     alignItems: "center",
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: THEME.textPrimary,
-  },
-
-  // Scroll Content
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 140, // Avoid overlap with fixed footer
-  },
+  headerTitle: { fontSize: 20, fontWeight: "bold", color: THEME.textPrimary },
+  scrollContent: { padding: 20, paddingBottom: 140 },
   sectionHeader: {
     fontSize: 14,
     fontWeight: "bold",
@@ -285,13 +269,7 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     marginBottom: 15,
   },
-  divider: {
-    height: 1,
-    backgroundColor: THEME.border,
-    marginVertical: 15,
-  },
-
-  // Cart Item
+  divider: { height: 1, backgroundColor: THEME.border, marginVertical: 15 },
   cartItemCard: {
     backgroundColor: THEME.cardBg,
     borderRadius: 16,
@@ -322,13 +300,7 @@ const styles = StyleSheet.create({
     color: THEME.textPrimary,
     marginBottom: 4,
   },
-  itemPrice: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: THEME.primary,
-  },
-
-  // Quantity Selector
+  itemPrice: { fontSize: 16, fontWeight: "800", color: THEME.primary },
   qtySelector: {
     flexDirection: "row",
     alignItems: "center",
@@ -345,8 +317,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: THEME.textPrimary,
   },
-
-  // Notes Input
   noteInput: {
     backgroundColor: THEME.background,
     borderWidth: 1,
@@ -356,8 +326,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: THEME.textPrimary,
   },
-
-  // Footer
   footer: {
     position: "absolute",
     bottom: 0,
@@ -384,16 +352,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 15,
   },
-  totalLabel: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: THEME.textPrimary,
-  },
-  totalValue: {
-    fontSize: 22,
-    fontWeight: "900",
-    color: THEME.primary,
-  },
+  totalLabel: { fontSize: 18, fontWeight: "bold", color: THEME.textPrimary },
+  totalValue: { fontSize: 22, fontWeight: "900", color: THEME.primary },
   primaryBtn: {
     backgroundColor: THEME.primary,
     padding: 16,
@@ -408,8 +368,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
   },
   primaryBtnText: { color: "white", fontWeight: "bold", fontSize: 16 },
-
-  // Empty State
   emptyState: {
     flex: 1,
     justifyContent: "center",
@@ -434,9 +392,5 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
   },
-  browseBtnText: {
-    color: THEME.primary,
-    fontWeight: "bold",
-    fontSize: 16,
-  },
+  browseBtnText: { color: THEME.primary, fontWeight: "bold", fontSize: 16 },
 });

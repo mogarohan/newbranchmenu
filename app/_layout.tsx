@@ -1,13 +1,15 @@
 import { Stack } from "expo-router";
 import { ActivityIndicator, View } from "react-native";
+import { ErrorBoundary } from "../components/ErrorBoundary"; // Assuming you created this from Step 8 previously
 import { THEME } from "../constants/theme";
 import { SessionProvider, useSession } from "../context/SessionContext";
+import { WaiterProvider, useWaiter } from "../context/WaiterContext";
 
-function RootLayoutNav() {
-  const { isReady } = useSession();
+function AppHydrationGuard() {
+  const { isReady: isCustomerReady } = useSession();
+  const { isReady: isWaiterReady } = useWaiter();
 
-  // Hold at a splash screen until AsyncStorage is fully loaded
-  if (!isReady) {
+  if (!isCustomerReady || !isWaiterReady) {
     return (
       <View
         style={{
@@ -26,14 +28,19 @@ function RootLayoutNav() {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(waiter)" />
     </Stack>
   );
 }
 
 export default function RootLayout() {
   return (
-    <SessionProvider>
-      <RootLayoutNav />
-    </SessionProvider>
+    <ErrorBoundary>
+      <SessionProvider>
+        <WaiterProvider>
+          <AppHydrationGuard />
+        </WaiterProvider>
+      </SessionProvider>
+    </ErrorBoundary>
   );
 }

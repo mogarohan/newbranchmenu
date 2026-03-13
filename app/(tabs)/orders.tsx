@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
-import { initEcho } from "../../services/echo"; // 🔥 Import our new WebSocket service
+import { initEcho } from "../../services/echo";
 import { OrderService } from "../../services/order.service";
 import { SessionService } from "../../services/session.service";
 
@@ -29,8 +29,6 @@ export default function OrdersTab() {
   const processedEventsRef = useRef<Set<string>>(new Set());
 
   const currency = menuData?.restaurant?.currency_symbol || "₹";
-
-  // Safely extract the session ID for the private channel
   const sessionId = menuData?.session?.id || menuData?.session?.session_id;
 
   const mergeOrders = (incomingOrders: any[]) => {
@@ -42,12 +40,10 @@ export default function OrdersTab() {
           (a, b) =>
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
         )
-        .slice(0, 50); // Keep memory usage low on mobile browsers
+        .slice(0, 50);
     });
   };
-  // =================================================================
-  // 1. HTTP FETCH EFFECT (Always runs to guarantee orders load)
-  // =================================================================
+
   useEffect(() => {
     if (!sessionToken) return;
 
@@ -79,9 +75,6 @@ export default function OrdersTab() {
     };
   }, [sessionToken]);
 
-  // =================================================================
-  // 2. WEBSOCKET EFFECT (Only runs if we successfully get a sessionId)
-  // =================================================================
   useEffect(() => {
     if (!sessionToken || !sessionId) {
       setConnectionStatus("offline");
@@ -90,13 +83,11 @@ export default function OrdersTab() {
 
     let isMounted = true;
 
-    // Singleton Echo Connection
     if (!echoRef.current) {
       echoRef.current = initEcho(sessionToken);
     }
     const echoInstance = echoRef.current;
 
-    // Monitor Network Status
     echoInstance.connector.pusher.connection.bind(
       "state_change",
       (states: any) => {
@@ -117,13 +108,11 @@ export default function OrdersTab() {
       setConnectionStatus("offline");
     });
 
-    // Subscribe to Private Channel
     echoInstance
       .private(`session.${sessionId}`)
       .listen(".OrderStatusUpdated", (event: any) => {
         if (!isMounted) return;
 
-        // Prevent duplicate processing
         const eventId = event.event_id;
         if (eventId) {
           if (processedEventsRef.current.has(eventId)) return;
@@ -138,6 +127,10 @@ export default function OrdersTab() {
     return () => {
       isMounted = false;
       if (echoRef.current) {
+        // 🔥 FIX: Prevent memory leak by unbinding before leaving
+        if (echoRef.current.connector?.pusher?.connection) {
+          echoRef.current.connector.pusher.connection.unbind_all();
+        }
         echoRef.current.leave(`session.${sessionId}`);
         echoRef.current.disconnect();
         echoRef.current = null;
@@ -160,7 +153,9 @@ export default function OrdersTab() {
   const handleCallWaiter = async () => {
     if (!tableData?.tId || !sessionToken) return;
     try {
-      await SessionService.callWaiter(tableData.tId, sessionToken);
+      // 🔥 FIX: Removed tableData.tId (Only sessionToken is needed)
+      await SessionService.callWaiter(sessionToken);
+
       if (Platform.OS === "web") {
         window.alert("A staff member has been alerted and is on the way.");
       } else {
@@ -343,7 +338,6 @@ export default function OrdersTab() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Order History</Text>
 
-        {/* 🟢 Live Connection Indicator */}
         <View
           style={[
             styles.statusIndicator,
@@ -415,15 +409,22 @@ export default function OrdersTab() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: THEME.background },
+  container: {
+    flex: 1,
+    backgroundColor: THEME.background,
+    // 🔥 FIX: Center layout on web desktop
+    maxWidth: 480,
+    width: "100%",
+    alignSelf: "center",
+  },
   header: {
-    backgroundColor: THEME.cardBg,
     paddingTop: Platform.OS === "android" ? 40 : 16,
     paddingBottom: 16,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
     borderBottomColor: THEME.border,
     alignItems: "center",
+    backgroundColor: THEME.cardBg,
   },
   headerTitle: { fontSize: 20, fontWeight: "bold", color: THEME.textPrimary },
   statusIndicator: {

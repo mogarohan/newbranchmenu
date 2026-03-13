@@ -4,7 +4,12 @@ import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
 
 export default function TabLayout() {
-  const { sessionToken } = useSession();
+  const { sessionToken, isReady } = useSession();
+
+  // 🔥 Web-Safe Flicker Guard: Wait for context to hydrate
+  if (!isReady) {
+    return null;
+  }
 
   // Strict Auth Guard
   if (!sessionToken) {
@@ -38,20 +43,6 @@ export default function TabLayout() {
           ),
         }}
       />
-
-      {/* <Tabs.Screen
-        name="bill"
-        options={{
-          title: "Bill",
-          tabBarIcon: ({ color }) => (
-            <MaterialIcons
-              name="account-balance-wallet"
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      /> */}
     </Tabs>
   );
 }

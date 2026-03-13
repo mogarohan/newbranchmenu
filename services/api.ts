@@ -1,10 +1,16 @@
+import NetInfo from "@react-native-community/netinfo";
 import Constants from "expo-constants";
+import { logEvent } from "../utils/logger";
 
-const BASE_URL =
-  Constants.expoConfig?.extra?.BASE_URL ||
-  "https://restaurant.techstrota.com/api";
+const API_URL =
+  Constants.expoConfig?.extra?.API_URL || process.env.EXPO_PUBLIC_API_URL;
+if (!API_URL) throw new Error("Missing API_URL environment variable");
 
-// Custom Error Class for structured error handling
+let cachedOnline = true;
+NetInfo.addEventListener((state) => {
+  cachedOnline = !!state.isConnected && !!state.isInternetReachable;
+});
+
 export class ApiError extends Error {
   status: number;
   data: any;
@@ -15,35 +21,64 @@ export class ApiError extends Error {
   }
 }
 
-export const apiCall = async (endpoint: string, options: RequestInit = {}) => {
-  const headers = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    ...options.headers,
-  };
+export async function apiCall(
+  endpoint: string,
+  options: RequestInit = {},
+  retries = 2,
+): Promise<any> {
+  if (!cachedOnline) {
+    throw new ApiError("No internet connection", 0, null);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
 
   try {
-    const response = await fetch(`${BASE_URL}${endpoint}`, {
+    const response = await fetch(`${API_URL}${endpoint}`, {
       ...options,
-      headers,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(options.headers || {}),
+      },
     });
 
-    // Future-proofing: Handle empty responses for DELETE/No-Content endpoints
+    clearTimeout(timeout);
     if (response.status === 204) return null;
 
+    let data = null;
+    try {
+      data = await response.json();
+    } catch (e) {}
+
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      // Throw structured error instead of just a string
       throw new ApiError(
-        errorData.message || `API Error: ${response.status}`,
+        data?.message || `API Error: ${response.status}`,
         response.status,
-        errorData,
+        data,
       );
     }
-
-    return await response.json();
-  } catch (error) {
-    console.error(`[API Call Failed] ${endpoint}:`, error);
+    return data;
+  } catch (error: any) {
+    if (
+      retries > 0 &&
+      error.name !== "AbortError" &&
+      error.status !== 401 &&
+      error.status !== 403 &&
+      error.status !== 0
+    ) {
+      logEvent("WARN", `API_RETRY (${retries} left)`, endpoint);
+      const delay = Math.pow(2, 3 - retries) * 500;
+      await new Promise((r) => setTimeout(r, delay));
+      return apiCall(endpoint, options, retries - 1);
+    }
+    logEvent("ERROR", "API_FAILED", { endpoint, error: error.message });
     throw error;
   }
-};
+}
+
+export const authHeaders = (token: string) => ({
+  Authorization: `Bearer ${token}`,
+  Accept: "application/json",
+});

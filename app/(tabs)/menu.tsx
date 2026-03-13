@@ -1,6 +1,6 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { default as React, useEffect, useRef, useState } from "react";
+import { default as React, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -72,14 +72,12 @@ export default function MenuScreen() {
   const [searchQuery, setSearchQuery] = useState("");
   const [loadingMenu, setLoadingMenu] = useState(true);
 
-  // Host State
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [activeGuests, setActiveGuests] = useState<any[]>([]);
   const [showRequestsModal, setShowRequestsModal] = useState(false);
   const echoRef = useRef<any>(null);
   const processedEventsRef = useRef<Set<string>>(new Set());
 
-  // 1. Fetch Menu
   useEffect(() => {
     const loadMenu = async () => {
       if (!tableData || !sessionToken) return;
@@ -105,7 +103,6 @@ export default function MenuScreen() {
     loadMenu();
   }, [tableData, sessionToken]);
 
-  // 2. 🔥 WEBSOCKET: Real-time Host Approvals
   useEffect(() => {
     let isMounted = true;
     const sessionId = menuData?.session?.id;
@@ -144,7 +141,6 @@ export default function MenuScreen() {
         }
 
         if (event.guest) {
-          // 🔥 Changed from setPendingGuests to setPendingRequests, and added : any[]
           setPendingRequests((prev: any[]) => {
             if (prev.some((g: any) => g.id === event.guest.id)) return prev;
             return [...prev, event.guest];
@@ -159,19 +155,20 @@ export default function MenuScreen() {
     return () => {
       isMounted = false;
       if (echoRef.current && sessionId) {
+        if (echoRef.current.connector?.pusher?.connection) {
+          echoRef.current.connector.pusher.connection.unbind_all();
+        }
         echoRef.current.leave(`session.${sessionId}`);
       }
     };
   }, [isPrimary, tableData?.tId, sessionToken, menuData?.session?.id]);
 
-  // 3. Handle Host Action (Optimistic UI Update)
   const handleRequestResponse = async (
     id: number,
     action: "approve" | "reject",
   ) => {
     if (!sessionToken) return;
 
-    // Grab the guest before removing them from pending
     const guestToMove = pendingRequests.find((r) => r.id === id);
 
     try {
@@ -179,18 +176,14 @@ export default function MenuScreen() {
 
       setPendingRequests((prev) => {
         const updated = prev.filter((r) => r.id !== id);
-        if (updated.length === 0) {
-          setShowRequestsModal(false);
-        }
+        if (updated.length === 0) setShowRequestsModal(false);
         return updated;
       });
 
-      // 🔥 Optimistically add to active guests without needing a page refresh
       if (action === "approve" && guestToMove) {
         setActiveGuests((prev) => [...prev, guestToMove]);
       }
     } catch (e) {
-      console.error("Failed to respond to request", e);
       Alert.alert("Error", "Could not process the request. Please try again.");
     }
   };
@@ -198,11 +191,9 @@ export default function MenuScreen() {
   const handleLeaveTable = () => {
     if (Platform.OS === "web") {
       const confirmed = window.confirm(
-        "Are you sure you want to disconnect from this table? Your cart and session will be cleared.",
+        "Are you sure you want to disconnect from this table?",
       );
-      if (confirmed) {
-        clearSession().then(() => router.replace("/"));
-      }
+      if (confirmed) clearSession().then(() => router.replace("/"));
       return;
     }
 
@@ -223,20 +214,15 @@ export default function MenuScreen() {
     );
   };
 
-  // 🔥 NEW: Call Waiter Functionality
   const handleCallWaiter = () => {
     Alert.alert("Call Waiter", "Do you need a waiter at your table?", [
       { text: "Cancel", style: "cancel" },
       {
-        text: "Yes, Call Waiter",
+        text: "Yes",
         onPress: async () => {
           try {
-            // Ensure this matches your SessionService implementation!
             await SessionService.callWaiter(sessionToken);
-            Alert.alert(
-              "Success",
-              "A waiter has been notified and will be with you shortly.",
-            );
+            Alert.alert("Success", "A waiter has been notified.");
           } catch (error) {
             Alert.alert("Error", "Could not notify the waiter at this time.");
           }
@@ -263,6 +249,25 @@ export default function MenuScreen() {
   const displayHostName = isPrimary
     ? customerName
     : menuData?.session?.host_name || "Host";
+
+  // 🔥 Web & Mobile Performance Fix: Search Filtering is now memoized to prevent render lag!
+  const filteredSearchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const query = searchQuery.toLowerCase().trim();
+
+    return categories
+      .map((cat: any) => {
+        const filteredItems = cat.items.filter(
+          (item: any) =>
+            item.name.toLowerCase().includes(query) ||
+            (item.description &&
+              item.description.toLowerCase().includes(query)) ||
+            (item.desc && item.desc.toLowerCase().includes(query)),
+        );
+        return { ...cat, items: filteredItems };
+      })
+      .filter((cat: any) => cat.items.length > 0);
+  }, [categories, searchQuery]);
 
   const renderMenuItem = (item: any) => {
     const currentQty = cart[item.id]?.qty || 0;
@@ -391,7 +396,6 @@ export default function MenuScreen() {
         </View>
 
         <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          {/* 🔥 Call Waiter Bell added to the top right */}
           <TouchableOpacity style={styles.bellBtn} onPress={handleCallWaiter}>
             <MaterialIcons
               name="notifications-active"
@@ -497,37 +501,23 @@ export default function MenuScreen() {
             {searchQuery.trim().length > 0 ? (
               <View>
                 <Text style={styles.categoryTitle}>Search Results</Text>
-                {categories.map((cat: any) => {
-                  const filteredItems = cat.items.filter((item: any) => {
-                    const query = searchQuery.toLowerCase().trim();
-                    return (
-                      item.name.toLowerCase().includes(query) ||
-                      (item.description &&
-                        item.description.toLowerCase().includes(query)) ||
-                      (item.desc && item.desc.toLowerCase().includes(query))
-                    );
-                  });
-
-                  if (filteredItems.length === 0) return null;
-
-                  return (
-                    <View key={`search-cat-${cat.id}`}>
-                      <Text
-                        style={[
-                          styles.categoryTitle,
-                          {
-                            fontSize: 16,
-                            color: THEME.textSecondary,
-                            marginTop: 12,
-                          },
-                        ]}
-                      >
-                        In {cat.name}
-                      </Text>
-                      {filteredItems.map((item: any) => renderMenuItem(item))}
-                    </View>
-                  );
-                })}
+                {filteredSearchResults.map((cat: any) => (
+                  <View key={`search-cat-${cat.id}`}>
+                    <Text
+                      style={[
+                        styles.categoryTitle,
+                        {
+                          fontSize: 16,
+                          color: THEME.textSecondary,
+                          marginTop: 12,
+                        },
+                      ]}
+                    >
+                      In {cat.name}
+                    </Text>
+                    {cat.items.map((item: any) => renderMenuItem(item))}
+                  </View>
+                ))}
               </View>
             ) : activeCategoryId === "all" ? (
               <View>
@@ -648,7 +638,6 @@ export default function MenuScreen() {
                 />
               </TouchableOpacity>
             </View>
-
             <ScrollView showsVerticalScrollIndicator={false}>
               <Text style={styles.sectionHeader}>Join Requests</Text>
               {pendingRequests.length === 0 ? (
@@ -769,7 +758,14 @@ export default function MenuScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: THEME.background },
+  container: {
+    flex: 1,
+    backgroundColor: THEME.background,
+    // 🔥 FIX: Center layout on web desktop
+    maxWidth: 480,
+    width: "100%",
+    alignSelf: "center",
+  },
   headerCenter: {
     flex: 1,
     alignItems: "center",
@@ -814,7 +810,6 @@ const styles = StyleSheet.create({
     borderRadius: 20,
   },
   bellBtn: {
-    // 🔥 Added style for Waiter Bell
     backgroundColor: "rgba(245, 158, 11, 0.1)",
     padding: 6,
     borderRadius: 20,

@@ -1,24 +1,30 @@
+import Constants from "expo-constants";
 import Echo from "laravel-echo";
 import Pusher from "pusher-js";
 
-// Polyfill for React Native Mobile (Web already has window)
-Pusher.logToConsole = true;
-global.Pusher = Pusher;
-// ⚠️ CHANGE THIS TO YOUR LARAVEL URL (Local IP for testing, Domain for production)
-const BASE_URL = "https://restaurant.techstrota.com";
+const BASE_URL =
+  Constants.expoConfig?.extra?.BASE_URL || process.env.EXPO_PUBLIC_BASE_URL;
 
-export const initEcho = (sessionToken: string) => {
+(global as any).Pusher = Pusher;
+
+export function initEcho(token: string) {
   return new Echo({
     broadcaster: "pusher",
-    key: "a36b8c344a4f12a3bd4a", // e.g., '1234abcd5678efgh'
-    cluster: "ap2", // e.g., 'ap2'
+    key: process.env.EXPO_PUBLIC_PUSHER_APP_KEY,
+    cluster: process.env.EXPO_PUBLIC_PUSHER_APP_CLUSTER,
+    wsHost: process.env.EXPO_PUBLIC_PUSHER_HOST || "ws-ap2.pusher.com",
+    wsPort: 80,
+    wssPort: 443,
+    enabledTransports: ["ws", "wss"],
     forceTLS: true,
     authEndpoint: `${BASE_URL}/api/pusher/auth`,
+    activityTimeout: 30000,
+    pongTimeout: 15000,
     auth: {
       headers: {
-        Authorization: sessionToken,
+        Authorization: `Bearer ${token}`,
         Accept: "application/json",
       },
     },
   });
-};
+}

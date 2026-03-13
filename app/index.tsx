@@ -1,8 +1,20 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
-import { default as React, useEffect, useRef, useState } from "react";
+import {
+  router,
+  useLocalSearchParams,
+  useRootNavigationState,
+} from "expo-router";
+import * as Updates from "expo-updates";
+import {
+  default as React,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
+  Platform,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -10,11 +22,16 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { THEME } from "../constants/theme";
+import { THEME, WAITER_THEME } from "../constants/theme";
 import { useSession } from "../context/SessionContext";
-import { initEcho } from "../services/echo"; // 🔥 Added Echo import
+import { useWaiter } from "../context/WaiterContext"; // 🔥 IMPORTED WAITER CONTEXT
+import { initEcho } from "../services/echo";
 import { SessionService } from "../services/session.service";
+
 export default function JoinScreen() {
+  const rootNavigationState = useRootNavigationState();
+
+  // 🔥 Customer Context
   const {
     startSession,
     customerName,
@@ -27,6 +44,9 @@ export default function JoinScreen() {
     clearSession,
   } = useSession();
 
+  // 🔥 Waiter Context
+  const { token: waiterToken } = useWaiter();
+
   const { r, t, token } = useLocalSearchParams<{
     r: string;
     t: string;
@@ -35,48 +55,45 @@ export default function JoinScreen() {
 
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(true);
-  const [isTableFull, setIsTableFull] = useState(false); // 🔥 NEW STATE
-  // Join vs Split State
+  const [isTableFull, setIsTableFull] = useState(false);
   const [existingHostName, setExistingHostName] = useState<string | null>(null);
   const [showJoinChoice, setShowJoinChoice] = useState(false);
   const [selectedMode, setSelectedMode] = useState<"new" | "join">("new");
 
-  // 1. Save QR Data & Validate Table
-  useEffect(() => {
-    const initTable = async () => {
-      if (r && t && token) {
-        if (tableData?.tId !== t || tableData?.token !== token) {
-          setTableData({ rId: r, tId: t, token });
-        }
-
-        // Validate Table API Call
-        try {
-          const data = await SessionService.validateTable(r, t, token);
-          if (data.is_full) {
-            setIsTableFull(true);
-            setValidating(false);
-            return; // Stop here, don't show the form
-          }
-          if (data.has_active_host) {
-            setExistingHostName(data.host_name);
-            setShowJoinChoice(true);
-            setSelectedMode("join"); // Default to joining
-          } else {
-            setShowJoinChoice(false);
-            setSelectedMode("new");
-          }
-        } catch (e) {
-          console.error("Validation failed", e);
-        } finally {
+  const initTable = useCallback(async () => {
+    if (r && t && token) {
+      if (tableData?.tId !== t || tableData?.token !== token) {
+        setTableData({ rId: r, tId: t, token });
+      }
+      try {
+        const data = await SessionService.validateTable(r, t, token);
+        if (data.is_full) {
+          setIsTableFull(true);
           setValidating(false);
+          return;
         }
-      } else {
+        if (data.has_active_host) {
+          setExistingHostName(data.host_name);
+          setShowJoinChoice(true);
+          setSelectedMode("join");
+        } else {
+          setShowJoinChoice(false);
+          setSelectedMode("new");
+        }
+      } catch (e) {
+        console.error("Validation failed", e);
+      } finally {
         setValidating(false);
       }
-    };
+    } else {
+      setValidating(false);
+    }
+  }, [r, t, token, tableData, setTableData]);
+
+  useEffect(() => {
     initTable();
-  }, [r, t, token]);
-  // 2. 🔥 WEBSOCKET: Real-time Waiting Room (No more polling!)
+  }, [initTable]);
+
   const echoRef = useRef<any>(null);
   const isMountedRef = useRef(true);
 
@@ -87,80 +104,58 @@ export default function JoinScreen() {
     const setupWebSocket = async () => {
       if (joinStatus === "pending" && tableData && sessionToken) {
         try {
-          // 1. One-time fetch just to get our session ID so we know which channel to listen to
           const res = await SessionService.checkSessionStatus(
             tableData.rId,
             tableData.tId,
             tableData.token,
             sessionToken,
           );
-
           const sessionId = res?.session?.id;
           if (!sessionId) return;
-
-          // 2. Initialize Echo
-          if (!echoRef.current) {
-            echoRef.current = initEcho(sessionToken);
-          }
-
-          // 3. Listen to the Host's decision instantly
+          if (!echoRef.current) echoRef.current = initEcho(sessionToken);
           channel = echoRef.current.private(`session.${sessionId}`);
-
           channel.listen(".JoinRequestResponded", (event: any) => {
             if (!isMountedRef.current) return;
-
             if (event.status === "approved") {
               setJoinStatus("approved");
               router.replace("/(tabs)/menu");
-            } else if (event.status === "rejected") {
-              setJoinStatus("rejected");
-            }
+            } else if (event.status === "rejected") setJoinStatus("rejected");
           });
         } catch (e: any) {
-          // 🔥 NEW: Grab the session ID even if it throws a 403!
           const sessionId = e.data?.session?.id;
-
           if (
             e.status === 403 &&
             e.data?.join_status === "pending" &&
             sessionId
           ) {
-            // Now we have the ID, we can connect to Pusher while waiting!
             if (!echoRef.current) echoRef.current = initEcho(sessionToken);
             channel = echoRef.current.private(`session.${sessionId}`);
-
             channel.listen(".JoinRequestResponded", (event: any) => {
               if (!isMountedRef.current) return;
               if (event.status === "approved") {
                 setJoinStatus("approved");
                 router.replace("/(tabs)/menu");
-              } else if (event.status === "rejected") {
-                setJoinStatus("rejected");
-              }
+              } else if (event.status === "rejected") setJoinStatus("rejected");
             });
           } else {
-            // Handle actual rejections/deletions as before
             const isExplicitlyRejected = e.data?.join_status === "rejected";
-            if (isExplicitlyRejected || e.status === 404 || e.status === 401) {
+            if (isExplicitlyRejected || e.status === 404 || e.status === 401)
               setJoinStatus("rejected");
-            }
           }
         }
       }
     };
-
     setupWebSocket();
-
     return () => {
       isMountedRef.current = false;
       if (echoRef.current) {
-        // Clean up connection when leaving the waiting room
         echoRef.current.disconnect();
         echoRef.current = null;
       }
     };
   }, [joinStatus, sessionToken, tableData, setJoinStatus]);
-  // 3. Auto-Redirect if Active/Approved
+
+  // Handle Customer Redirects
   useEffect(() => {
     if (
       sessionToken &&
@@ -170,23 +165,36 @@ export default function JoinScreen() {
     }
   }, [sessionToken, joinStatus]);
 
-  const handleJoin = async () => {
+  // 🔥 NEW: Auto-Redirect Waiters if they are already logged in!
+  useEffect(() => {
+    if (waiterToken) {
+      router.replace("/(waiter)/(tabs)/orders");
+    }
+  }, [waiterToken]);
+
+  const handleJoin = useCallback(async () => {
     if (!customerName.trim()) return;
     setLoading(true);
     try {
       await startSession(customerName, selectedMode);
-      // If they request to join, startSession sets status to 'pending', which triggers polling.
-      // If 'new', it sets status to 'active' and auto-redirect triggers.
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [customerName, selectedMode, startSession]);
 
-  // --- RENDERS ---
+  if (!rootNavigationState?.key) {
+    return (
+      <SafeAreaView style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={THEME.primary} />
+      </SafeAreaView>
+    );
+  }
 
-  if (validating) {
+  // 🔥 THE BUG WAS HERE: Deleted the "if (r === undefined)" block that trapped the app!
+
+  if (validating && r && t && token) {
     return (
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color={THEME.primary} />
@@ -197,7 +205,63 @@ export default function JoinScreen() {
     );
   }
 
-  // REJECTED STATE
+  if (!r || !t || !token) {
+    return (
+      <SafeAreaView
+        style={[
+          styles.centerContainer,
+          { backgroundColor: WAITER_THEME.backgroundDark },
+        ]}
+      >
+        <View style={{ alignItems: "center", marginBottom: 40 }}>
+          <MaterialIcons
+            name="restaurant-menu"
+            size={80}
+            color={WAITER_THEME.primary}
+          />
+          <Text
+            style={{
+              fontSize: 32,
+              fontWeight: "bold",
+              color: "#fff",
+              marginTop: 16,
+            }}
+          >
+            TechStrota POS
+          </Text>
+          <Text style={{ color: "rgba(255,255,255,0.6)", marginTop: 8 }}>
+            Please scan a QR code to order
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10,
+            borderWidth: 2,
+            borderColor: WAITER_THEME.primary,
+            paddingVertical: 14,
+            paddingHorizontal: 32,
+            borderRadius: 12,
+            ...((Platform.OS === "web" ? { cursor: "pointer" } : {}) as any),
+          }}
+          onPress={() => router.push("/(waiter)/login")}
+        >
+          <MaterialIcons name="badge" size={24} color={WAITER_THEME.primary} />
+          <Text
+            style={{
+              color: WAITER_THEME.primary,
+              fontWeight: "bold",
+              fontSize: 16,
+            }}
+          >
+            Staff Login
+          </Text>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
   if (joinStatus === "rejected") {
     return (
       <View style={styles.centerContainer}>
@@ -215,7 +279,7 @@ export default function JoinScreen() {
       </View>
     );
   }
-  // TABLE FULL STATE
+
   if (isTableFull) {
     return (
       <View style={styles.centerContainer}>
@@ -226,7 +290,7 @@ export default function JoinScreen() {
           speak to the staff.
         </Text>
         <TouchableOpacity
-          onPress={() => window.location.reload()}
+          onPress={async () => await Updates.reloadAsync()}
           style={[
             styles.joinButton,
             {
@@ -242,7 +306,6 @@ export default function JoinScreen() {
     );
   }
 
-  // PENDING / WAITING ROOM
   if (joinStatus === "pending") {
     return (
       <View style={styles.centerContainer}>
@@ -264,7 +327,6 @@ export default function JoinScreen() {
     );
   }
 
-  // MAIN LOGIN / JOIN FORM
   const isButtonDisabled = !customerName.trim() || loading;
 
   return (
@@ -273,7 +335,6 @@ export default function JoinScreen() {
         <View style={styles.iconCircle}>
           <MaterialIcons name="restaurant" size={24} color={THEME.primary} />
         </View>
-        {/* Make it generic until the API loads the real name on the next screen */}
         <Text style={styles.headerTitle}>Welcome to our Restaurant</Text>
         <View style={{ width: 40 }} />
       </View>
@@ -291,7 +352,6 @@ export default function JoinScreen() {
           </Text>
         </View>
 
-        {/* SPLIT VS JOIN UI */}
         {showJoinChoice ? (
           <View style={{ width: "100%", marginBottom: 24 }}>
             <Text
@@ -303,7 +363,6 @@ export default function JoinScreen() {
               </Text>
               . How do you want to order?
             </Text>
-
             <TouchableOpacity
               style={[
                 styles.choiceCard,
@@ -337,7 +396,6 @@ export default function JoinScreen() {
                 </Text>
               </View>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={[
                 styles.choiceCard,
@@ -378,7 +436,6 @@ export default function JoinScreen() {
           </Text>
         )}
 
-        {/* NAME INPUT */}
         <View style={styles.formArea}>
           <Text style={styles.label}>Your Name</Text>
           <View style={styles.inputContainer}>
@@ -396,9 +453,12 @@ export default function JoinScreen() {
               onChangeText={setCustomerName}
             />
           </View>
-
           <TouchableOpacity
-            style={[styles.joinButton, isButtonDisabled && { opacity: 0.6 }]}
+            style={[
+              styles.joinButton,
+              isButtonDisabled && { opacity: 0.6 },
+              Platform.OS === "web" && ({ cursor: "pointer" } as any),
+            ]}
             onPress={handleJoin}
             disabled={isButtonDisabled}
           >
