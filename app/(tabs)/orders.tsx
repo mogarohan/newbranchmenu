@@ -1,10 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Platform,
+  RefreshControl,
   SafeAreaView,
   StyleSheet,
   Text,
@@ -21,6 +28,7 @@ export default function OrdersTab() {
   const { sessionToken, tableData, menuData, orders, setOrders } = useSession();
 
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<
     "connecting" | "live" | "offline"
   >("connecting");
@@ -44,36 +52,39 @@ export default function OrdersTab() {
     });
   };
 
-  useEffect(() => {
-    if (!sessionToken) return;
-
-    let isMounted = true;
-    const abortController = new AbortController();
-
-    const fetchOrders = async () => {
+  const fetchOrders = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!sessionToken) return;
       try {
-        const data = await OrderService.getOrders(
-          sessionToken,
-          abortController.signal,
-        );
-        if (isMounted) {
-          mergeOrders(Array.isArray(data) ? data : []);
-          setLoading(false);
-        }
+        const data = await OrderService.getOrders(sessionToken, signal);
+        mergeOrders(Array.isArray(data) ? data : []);
       } catch (e: any) {
-        if (e.name !== "AbortError" && isMounted) {
-          setLoading(false);
+        if (e.name !== "AbortError") {
+          console.error("Failed to fetch orders", e);
         }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    };
+    },
+    [sessionToken],
+  );
 
+  useEffect(() => {
+    const abortController = new AbortController();
+    fetchOrders(abortController.signal);
+    return () => abortController.abort();
+  }, [fetchOrders]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
     fetchOrders();
 
-    return () => {
-      isMounted = false;
-      abortController.abort();
-    };
-  }, [sessionToken]);
+    if (connectionStatus === "offline" && echoRef.current) {
+      setConnectionStatus("connecting");
+      echoRef.current.connector.pusher.connection.connect();
+    }
+  };
 
   useEffect(() => {
     if (!sessionToken || !sessionId) {
@@ -127,7 +138,6 @@ export default function OrdersTab() {
     return () => {
       isMounted = false;
       if (echoRef.current) {
-        // 🔥 FIX: Prevent memory leak by unbinding before leaving
         if (echoRef.current.connector?.pusher?.connection) {
           echoRef.current.connector.pusher.connection.unbind_all();
         }
@@ -151,9 +161,8 @@ export default function OrdersTab() {
   );
 
   const handleCallWaiter = async () => {
-    if (!tableData?.tId || !sessionToken) return;
+    if (!sessionToken) return;
     try {
-      // 🔥 FIX: Removed tableData.tId (Only sessionToken is needed)
       await SessionService.callWaiter(sessionToken);
 
       if (Platform.OS === "web") {
@@ -279,9 +288,9 @@ export default function OrdersTab() {
                 <Text style={styles.itemPrice}>
                   {currency}
                   {(
-                    Number(item.total_price) ||
-                    Number(item.unit_price || item.price || 0) *
-                      Number(item.quantity || 1)
+                    (Number(item.total_price) ||
+                      Number(item.unit_price || item.price || 0)) *
+                    Number(item.quantity || 1)
                   ).toFixed(2)}
                 </Text>
               </View>
@@ -338,33 +347,43 @@ export default function OrdersTab() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Order History</Text>
 
-        <View
-          style={[
-            styles.statusIndicator,
-            connectionStatus === "live"
-              ? styles.bgSuccess
-              : connectionStatus === "connecting"
-                ? styles.bgWarning
-                : styles.bgDanger,
-          ]}
-        >
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
           <View
             style={[
-              styles.statusDot,
+              styles.statusIndicator,
               connectionStatus === "live"
-                ? styles.dotSuccess
+                ? styles.bgSuccess
                 : connectionStatus === "connecting"
-                  ? styles.dotWarning
-                  : styles.dotDanger,
+                  ? styles.bgWarning
+                  : styles.bgDanger,
             ]}
-          />
-          <Text style={styles.statusIndicatorText}>
-            {connectionStatus === "live"
-              ? "Live"
-              : connectionStatus === "connecting"
-                ? "Connecting..."
-                : "Offline"}
-          </Text>
+          >
+            <View
+              style={[
+                styles.statusDot,
+                connectionStatus === "live"
+                  ? styles.dotSuccess
+                  : connectionStatus === "connecting"
+                    ? styles.dotWarning
+                    : styles.dotDanger,
+              ]}
+            />
+            <Text style={styles.statusIndicatorText}>
+              {connectionStatus === "live"
+                ? "Live"
+                : connectionStatus === "connecting"
+                  ? "Connecting..."
+                  : "Offline"}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.refreshBtn}
+            onPress={onRefresh}
+            disabled={refreshing || loading}
+          >
+            <Ionicons name="reload" size={18} color={THEME.textPrimary} />
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -385,6 +404,27 @@ export default function OrdersTab() {
           <Text style={styles.emptyStateText}>
             When you place orders, they will appear here.
           </Text>
+
+          {/* 🔥 FIX: Clean Tap-to-Refresh for Web Safety instead of forcing a ScrollView wrapper */}
+          <TouchableOpacity
+            style={styles.webSafeRefreshBtn}
+            onPress={onRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color={THEME.primary} />
+            ) : (
+              <>
+                <Ionicons
+                  name="reload"
+                  size={16}
+                  color={THEME.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.webSafeRefreshText}>Tap to Refresh</Text>
+              </>
+            )}
+          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
@@ -398,6 +438,13 @@ export default function OrdersTab() {
           maxToRenderPerBatch={10}
           windowSize={5}
           removeClippedSubviews={Platform.OS !== "ios"}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={THEME.primary}
+            />
+          }
         />
       )}
 
@@ -412,12 +459,13 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: THEME.background,
-    // 🔥 FIX: Center layout on web desktop
     maxWidth: 480,
     width: "100%",
     alignSelf: "center",
   },
   header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     paddingTop: Platform.OS === "android" ? 40 : 16,
     paddingBottom: 16,
     paddingHorizontal: 20,
@@ -433,7 +481,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
-    marginTop: 4,
   },
   bgSuccess: { backgroundColor: "rgba(16, 185, 129, 0.1)" },
   bgWarning: { backgroundColor: "rgba(245, 158, 11, 0.1)" },
@@ -446,6 +493,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "bold",
     color: THEME.textSecondary,
+  },
+  refreshBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: THEME.background,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: THEME.border,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)),
   },
   scrollContent: { padding: 16, paddingBottom: 100 },
   orderCard: {
@@ -578,6 +636,24 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
   },
+
+  // 🔥 NEW: Web-Safe empty state refresh button
+  webSafeRefreshBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: THEME.primaryLight,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginTop: 24,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)),
+  },
+  webSafeRefreshText: {
+    color: THEME.primary,
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+
   fab: {
     position: "absolute",
     bottom: 24,

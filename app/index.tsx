@@ -24,14 +24,13 @@ import {
 } from "react-native";
 import { THEME, WAITER_THEME } from "../constants/theme";
 import { useSession } from "../context/SessionContext";
-import { useWaiter } from "../context/WaiterContext"; // 🔥 IMPORTED WAITER CONTEXT
+import { useWaiter } from "../context/WaiterContext";
 import { initEcho } from "../services/echo";
 import { SessionService } from "../services/session.service";
 
 export default function JoinScreen() {
   const rootNavigationState = useRootNavigationState();
 
-  // 🔥 Customer Context
   const {
     startSession,
     customerName,
@@ -44,7 +43,6 @@ export default function JoinScreen() {
     clearSession,
   } = useSession();
 
-  // 🔥 Waiter Context
   const { token: waiterToken } = useWaiter();
 
   const { r, t, token } = useLocalSearchParams<{
@@ -97,30 +95,23 @@ export default function JoinScreen() {
   const echoRef = useRef<any>(null);
   const isMountedRef = useRef(true);
 
+  // 🔥 HYBRID WEBSOCKET + POLLING FALLBACK SYSTEM
   useEffect(() => {
     isMountedRef.current = true;
     let channel: any = null;
+    let pollInterval: ReturnType<typeof setInterval>;
 
-    const setupWebSocket = async () => {
+    const setupRealtime = async () => {
       if (joinStatus === "pending" && tableData && sessionToken) {
         try {
-          const res = await SessionService.checkSessionStatus(
+          // Check instantly just in case Host approved while we were offline
+          await SessionService.checkSessionStatus(
             tableData.rId,
             tableData.tId,
             tableData.token,
             sessionToken,
           );
-          const sessionId = res?.session?.id;
-          if (!sessionId) return;
-          if (!echoRef.current) echoRef.current = initEcho(sessionToken);
-          channel = echoRef.current.private(`session.${sessionId}`);
-          channel.listen(".JoinRequestResponded", (event: any) => {
-            if (!isMountedRef.current) return;
-            if (event.status === "approved") {
-              setJoinStatus("approved");
-              router.replace("/(tabs)/menu");
-            } else if (event.status === "rejected") setJoinStatus("rejected");
-          });
+          if (isMountedRef.current) setJoinStatus("approved");
         } catch (e: any) {
           const sessionId = e.data?.session?.id;
           if (
@@ -128,32 +119,60 @@ export default function JoinScreen() {
             e.data?.join_status === "pending" &&
             sessionId
           ) {
+            // 1. Try WebSocket for Instant Feedback
             if (!echoRef.current) echoRef.current = initEcho(sessionToken);
+            echoRef.current.leaveAllChannels();
+
             channel = echoRef.current.private(`session.${sessionId}`);
             channel.listen(".JoinRequestResponded", (event: any) => {
               if (!isMountedRef.current) return;
               if (event.status === "approved") {
                 setJoinStatus("approved");
-                router.replace("/(tabs)/menu");
-              } else if (event.status === "rejected") setJoinStatus("rejected");
+              } else if (event.status === "rejected") {
+                setJoinStatus("rejected");
+              }
             });
-          } else {
-            const isExplicitlyRejected = e.data?.join_status === "rejected";
-            if (isExplicitlyRejected || e.status === 404 || e.status === 401)
-              setJoinStatus("rejected");
+
+            // 2. Setup 3-Second Heartbeat Polling
+            // If the WebSockets fail or the network blips, this guarantees they get in.
+            pollInterval = setInterval(async () => {
+              try {
+                // If this succeeds (returns 200), we are officially approved!
+                await SessionService.checkSessionStatus(
+                  tableData.rId,
+                  tableData.tId,
+                  tableData.token,
+                  sessionToken,
+                );
+                if (isMountedRef.current) setJoinStatus("approved");
+              } catch (err: any) {
+                // Keep waiting unless explicitly rejected
+                if (
+                  err?.data?.join_status === "rejected" &&
+                  isMountedRef.current
+                ) {
+                  setJoinStatus("rejected");
+                }
+              }
+            }, 3000);
+          } else if (e.status === 404 || e.data?.join_status === "rejected") {
+            if (isMountedRef.current) setJoinStatus("rejected");
           }
         }
       }
     };
-    setupWebSocket();
+
+    setupRealtime();
+
     return () => {
       isMountedRef.current = false;
+      if (pollInterval) clearInterval(pollInterval);
       if (echoRef.current) {
         echoRef.current.disconnect();
         echoRef.current = null;
       }
     };
-  }, [joinStatus, sessionToken, tableData, setJoinStatus]);
+  }, [joinStatus, sessionToken, tableData]);
 
   // Handle Customer Redirects
   useEffect(() => {
@@ -165,7 +184,7 @@ export default function JoinScreen() {
     }
   }, [sessionToken, joinStatus]);
 
-  // 🔥 NEW: Auto-Redirect Waiters if they are already logged in!
+  // Auto-Redirect Waiters if they are already logged in
   useEffect(() => {
     if (waiterToken) {
       router.replace("/(waiter)/(tabs)/orders");
@@ -192,7 +211,17 @@ export default function JoinScreen() {
     );
   }
 
-  // 🔥 THE BUG WAS HERE: Deleted the "if (r === undefined)" block that trapped the app!
+  // Prevent UI flash for logged-in waiters
+  if (waiterToken) {
+    return (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={WAITER_THEME.primary} />
+        <Text style={{ marginTop: 16, color: WAITER_THEME.textSecondary }}>
+          Returning to Staff Portal...
+        </Text>
+      </View>
+    );
+  }
 
   if (validating && r && t && token) {
     return (
