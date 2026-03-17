@@ -40,21 +40,24 @@ const Storage = {
 interface WaiterUser {
   id: number;
   staff_id: string;
-  email?: string; // 🔥 ADDED
+  email?: string;
   name: string;
   restaurant_id: number;
+  branch_id?: number | null; // 🔥 ADDED FOR MULTI-BRANCH
   role: string;
 }
 interface TableUpdatePayload {
   tableId: number;
   status: "available" | "occupied" | "cleaning";
   updatedAt: number;
+  branchId?: number | null; // 🔥 ADDED FOR MULTI-BRANCH
 }
 interface AlertPayload {
   eventId: string;
   tableNumber: string | number;
-  customerName: string; // 🔥 ADDED
+  customerName: string;
   timestamp: number;
+  branch_id?: number | null; // 🔥 ADDED FOR MULTI-BRANCH
 }
 
 interface WaiterContextType {
@@ -112,19 +115,17 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
       try {
         const storedToken = await Storage.getItemAsync("waiter_token");
         const storedShift = await Storage.getItemAsync("waiter_shift_active");
-        const storedWaiter = await Storage.getItemAsync("waiter_data"); // 🔥 Fetch saved profile
+        const storedWaiter = await Storage.getItemAsync("waiter_data");
 
         if (storedShift) setShiftActive(storedShift === "true");
 
-        // 🔥 INSTANT HYDRATION: Set state instantly so the router doesn't kick the Waiter out
         if (storedToken && storedWaiter) {
           setToken(storedToken);
           setWaiter(JSON.parse(storedWaiter));
         }
 
-        setIsReady(true); // Let the app render immediately!
+        setIsReady(true);
 
-        // Background Verification
         if (storedToken) {
           WaiterService.profile
             .get(storedToken)
@@ -133,7 +134,6 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
               Storage.setItemAsync("waiter_data", JSON.stringify(profile));
             })
             .catch((err) => {
-              // Only log out if the token is completely invalid/expired (401)
               if (err?.status === 401) cleanStorage();
             });
         }
@@ -208,7 +208,6 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    // 🔥 FIX 1: Removed the ".orders" suffix to correctly match the Laravel Event
     const ordersChannel = echoRef.current.private(
       `restaurant.${waiter.restaurant_id}`,
     );
@@ -220,11 +219,17 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
       const order = event.order;
       if (!order) return;
 
-      // 🔥 FIX 2: Look for restaurant_id inside the nested order object
       if (order.restaurant_id !== waiter.restaurant_id) return;
       if (event.event_id && trackEvent(event.event_id)) return;
 
-      // 🔥 FIX 3: Trigger a UI refresh whenever the status is pending, placed, preparing, or ready
+      // 🔥 CRITICAL FIX: Ignore orders from other branches for Notification Badges
+      if (
+        waiter.branch_id &&
+        event.branch_id &&
+        event.branch_id !== waiter.branch_id
+      )
+        return;
+
       if (["pending", "placed", "preparing", "ready"].includes(order.status)) {
         setOrdersReadyCount((prev) => prev + 1);
       }
@@ -235,11 +240,20 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
         return;
       if (event.event_id && trackEvent(event.event_id)) return;
 
+      // 🔥 CRITICAL FIX: Ignore alerts from other branches
+      if (
+        waiter.branch_id &&
+        event.branch_id &&
+        event.branch_id !== waiter.branch_id
+      )
+        return;
+
       setLastAlertPayload({
         eventId: event.event_id,
         tableNumber: event.table_number || event.table_id || "?",
         customerName: event.customer_name || "Guest",
         timestamp: Date.now(),
+        branch_id: event.branch_id, // 🔥 Pass down
       });
 
       setAlertsCount((prev) => prev + 1);
@@ -248,10 +262,20 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
     alertsChannel.listen(".TableStatusUpdated", (event: any) => {
       if (event.restaurantId && event.restaurantId !== waiter.restaurant_id)
         return;
+
+      // 🔥 CRITICAL FIX: Ignore table updates from other branches
+      if (
+        waiter.branch_id &&
+        event.branchId &&
+        event.branchId !== waiter.branch_id
+      )
+        return;
+
       setLastTableUpdate({
         tableId: event.tableId,
         status: event.status,
         updatedAt: event.updatedAt,
+        branchId: event.branchId, // 🔥 Pass down
       });
     });
   };

@@ -1,19 +1,19 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    LayoutAnimation,
-    Modal,
-    Platform,
-    RefreshControl,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    UIManager,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  LayoutAnimation,
+  Modal,
+  Platform,
+  RefreshControl,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  UIManager,
+  View,
 } from "react-native";
 import { WAITER_THEME } from "../../../constants/theme";
 import { useWaiter } from "../../../context/WaiterContext";
@@ -32,11 +32,12 @@ interface Table {
   number: string | number;
   status: "available" | "occupied" | "cleaning";
   capacity: number;
-  updatedAt?: number; // Local tracking of the last update
+  updatedAt?: number;
 }
 
 export default function WaiterTablesScreen() {
-  const { token, lastTableUpdate } = useWaiter();
+  // 🔥 Fetching waiter object along with lastTableUpdate
+  const { waiter, token, lastTableUpdate } = useWaiter();
 
   const [tables, setTables] = useState<Table[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,30 +64,34 @@ export default function WaiterTablesScreen() {
     }
   }, [token]);
 
-  // 1. Initial Data Load
   useEffect(() => {
     fetchTables();
   }, [fetchTables]);
 
-  // 2. 🔥 Soft Refresh Safety Net
-  // Ensures new or deleted tables show up without requiring an app restart
   useEffect(() => {
     const interval = setInterval(() => {
       fetchTables();
-    }, 120000); // 2 minutes
+    }, 120000);
     return () => clearInterval(interval);
   }, [fetchTables]);
 
-  // 3. ZERO-API REALTIME SYNC (With chronological protection)
+  // 3. ZERO-API REALTIME SYNC (With chronological & branch protection)
   useEffect(() => {
     if (lastTableUpdate) {
+      // 👇 NEW: Branch Isolation Check
+      if (
+        waiter?.branch_id &&
+        lastTableUpdate.branchId &&
+        lastTableUpdate.branchId !== waiter.branch_id
+      ) {
+        return;
+      }
+
       setTables((prev) => {
         const exists = prev.find((t) => t.id === lastTableUpdate.tableId);
 
-        // Ignore if table doesn't exist locally yet, or if status is identical
         if (!exists || exists.status === lastTableUpdate.status) return prev;
 
-        // 🔥 OOO Guard: If our local table was updated *after* this incoming event, discard the stale event
         if (exists.updatedAt && exists.updatedAt > lastTableUpdate.updatedAt)
           return prev;
 
@@ -103,7 +108,7 @@ export default function WaiterTablesScreen() {
         );
       });
     }
-  }, [lastTableUpdate]);
+  }, [lastTableUpdate, waiter?.branch_id]); // Dependency updated
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -116,7 +121,6 @@ export default function WaiterTablesScreen() {
     if (!token || !selectedTable) return;
     setUpdating(true);
 
-    // Optimistically record the time so an incoming delayed socket event doesn't overwrite this
     const localTimestamp = Math.floor(Date.now() / 1000);
 
     try {

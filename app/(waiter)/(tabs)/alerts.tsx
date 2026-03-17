@@ -1,15 +1,15 @@
 import { MaterialIcons } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
 import {
-    FlatList,
-    LayoutAnimation,
-    Platform,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    UIManager,
-    View,
+  FlatList,
+  LayoutAnimation,
+  Platform,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  UIManager,
+  View,
 } from "react-native";
 import { WAITER_THEME } from "../../../constants/theme";
 import { useWaiter } from "../../../context/WaiterContext";
@@ -26,20 +26,29 @@ interface WaiterAlert {
   id: string;
   type: "call_waiter" | "system";
   tableNumber: string | number;
-  customerName: string; // 🔥 NEW
+  customerName: string;
   timestamp: Date;
   status: "active" | "resolved";
 }
 
 export default function WaiterAlertsScreen() {
-  // 🔥 Pull the precise payload from context
-  const { lastAlertPayload } = useWaiter();
+  // 🔥 Fetching waiter object along with lastAlertPayload
+  const { waiter, lastAlertPayload } = useWaiter();
 
   const [alerts, setAlerts] = useState<WaiterAlert[]>([]);
 
-  // 1. Reactive Alert Generation with Real Table Numbers
+  // 1. Reactive Alert Generation with Real Table Numbers and Branch Validation
   useEffect(() => {
     if (lastAlertPayload) {
+      // 👇 NEW: Branch Isolation Check
+      // If waiter has a branch_id and it doesn't match the event's branch_id, ignore the alert
+      if (
+        waiter?.branch_id &&
+        lastAlertPayload.branch_id !== waiter.branch_id
+      ) {
+        return;
+      }
+
       setAlerts((prev) => {
         // Prevent duplicate renders by checking the backend Event ID
         const isDuplicate = prev.some((a) => a.id === lastAlertPayload.eventId);
@@ -48,8 +57,8 @@ export default function WaiterAlertsScreen() {
         const newAlert: WaiterAlert = {
           id: lastAlertPayload.eventId,
           type: "call_waiter",
-          tableNumber: lastAlertPayload.tableNumber, // Dynamic Table Number
-          customerName: lastAlertPayload.customerName, // 🔥 NEW
+          tableNumber: lastAlertPayload.tableNumber,
+          customerName: lastAlertPayload.customerName,
           timestamp: new Date(),
           status: "active",
         };
@@ -58,7 +67,7 @@ export default function WaiterAlertsScreen() {
         return [newAlert, ...prev];
       });
     }
-  }, [lastAlertPayload]);
+  }, [lastAlertPayload, waiter?.branch_id]); // Dependency updated
 
   // 2. Auto-Refresh Wait Timers
   useEffect(() => {
@@ -84,7 +93,7 @@ export default function WaiterAlertsScreen() {
 
   const renderAlertItem = ({ item }: { item: WaiterAlert }) => {
     const isUrgent =
-      new Date().getTime() - item.timestamp.getTime() > 5 * 60000; // > 5 mins is urgent
+      new Date().getTime() - item.timestamp.getTime() > 5 * 60000;
 
     return (
       <View style={[styles.alertCard, isUrgent && styles.alertCardUrgent]}>
@@ -209,7 +218,6 @@ const styles = StyleSheet.create({
     color: WAITER_THEME.textSecondary,
     marginTop: 2,
   },
-
   emptyState: {
     flex: 1,
     justifyContent: "center",
@@ -236,9 +244,7 @@ const styles = StyleSheet.create({
     color: WAITER_THEME.textSecondary,
     textAlign: "center",
   },
-
   listContent: { padding: 16, paddingBottom: 100 },
-
   alertCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -286,7 +292,6 @@ const styles = StyleSheet.create({
     color: WAITER_THEME.textSecondary,
     fontWeight: "500",
   },
-
   resolveBtn: {
     width: 44,
     height: 44,
