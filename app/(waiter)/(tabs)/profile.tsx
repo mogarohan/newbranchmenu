@@ -1,29 +1,55 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
-import React from "react";
+import { router, useFocusEffect } from "expo-router"; // 👈 useFocusEffect add kiya gaya hai
+import React, { useCallback, useState } from "react"; // 👈 hooks add kiye gaye hain
 import {
-    Alert,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { WAITER_THEME } from "../../../constants/theme";
 import { useWaiter } from "../../../context/WaiterContext";
+import api from "../../../services/api"; // 👈 API service import kiya gaya hai
 
 export default function WaiterProfileScreen() {
-  const { waiter, shiftActive, toggleShift, logout, socketConnected } =
+  const { waiter, shiftActive, toggleShift, logout, socketConnected, setWaiter } =
     useWaiter();
+  
+  const [isRefreshing, setIsRefreshing] = useState(false); // 👈 Loading state for stats update
+
+  // 🔥 BACKEND SE LATEST STATS FETCH KARNE KA FUNCTION
+  const refreshProfileStats = useCallback(async () => {
+    try {
+      setIsRefreshing(true);
+      // Backend route: /waiter/profile jo database se taza total_served laayega
+      const response = await api.get("/waiter/profile"); 
+      if (response.data) {
+        setWaiter(response.data); // Context state ko naye data se update kar rahe hain
+      }
+    } catch (error) {
+      console.log("Profile stats refresh failed:", error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [setWaiter]);
+
+  // 🔥 JAB BHI USER IS SCREEN PAR AAYEGA, DATA AUTO REFRESH HOGA
+  useFocusEffect(
+    useCallback(() => {
+      refreshProfileStats();
+    }, [refreshProfileStats])
+  );
 
   const handleLogout = () => {
     if (Platform.OS === "web") {
       const confirmed = window.confirm("Are you sure you want to log out?");
       if (confirmed) {
-        // 🔥 Use 'as any' to bypass the strict Expo Router type check
         logout().then(() => router.replace("/(waiter)/login" as any));
       }
       return;
@@ -36,16 +62,24 @@ export default function WaiterProfileScreen() {
         style: "destructive",
         onPress: async () => {
           await logout();
-          // 🔥 Use 'as any' to bypass the strict Expo Router type check
           router.replace("/(waiter)/login" as any);
         },
       },
     ]);
   };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Profile</Text>
+        {/* Manual Refresh Button */}
+        <TouchableOpacity onPress={refreshProfileStats} disabled={isRefreshing}>
+          {isRefreshing ? (
+            <ActivityIndicator size="small" color={WAITER_THEME.primary} />
+          ) : (
+            <MaterialIcons name="refresh" size={24} color={WAITER_THEME.textPrimary} />
+          )}
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -63,14 +97,26 @@ export default function WaiterProfileScreen() {
             <Text style={styles.waiterName}>
               {waiter?.name || "Staff Member"}
             </Text>
-            {/* 🔥 Tells it to use the email, or fallback to ID if you add one later */}
             <Text style={styles.waiterId}>
               {waiter?.email || waiter?.staff_id || "---"}
-            </Text>{" "}
+            </Text>
             <View style={styles.roleBadge}>
               <Text style={styles.roleText}>
                 {waiter?.role?.toUpperCase() || "WAITER"}
               </Text>
+            </View>
+          </View>
+        </View>
+
+        {/* --- Performance Stats Section (Tables Served) --- */}
+        <Text style={styles.sectionHeader}>Service Performance</Text>
+        <View style={styles.statsContainer}>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Lifetime Tables Served</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <MaterialIcons name="restaurant" size={24} color={WAITER_THEME.primary} />
+              {/* 🔥 BACKEND SE FETCHED total_served YAHAN SHOW HOGA */}
+              <Text style={styles.statValue}>{waiter?.total_served ?? "0"}</Text> 
             </View>
           </View>
         </View>
@@ -190,7 +236,6 @@ export default function WaiterProfileScreen() {
               />
               <Text style={styles.diagnosticText}>Restaurant ID</Text>
             </View>
-            {/* 🔥 Crucial for verifying tenant isolation during deployment */}
             <Text style={styles.diagnosticValue}>
               #{waiter?.restaurant_id || "---"}
             </Text>
@@ -218,6 +263,9 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
   header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: 20,
     paddingTop: Platform.OS === "android" ? 40 : 16,
     paddingBottom: 16,
@@ -230,9 +278,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: WAITER_THEME.textPrimary,
   },
-
   scrollContent: { padding: 20, paddingBottom: 100 },
-
   profileCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -242,16 +288,6 @@ const styles = StyleSheet.create({
     marginBottom: 24,
     borderWidth: 1,
     borderColor: WAITER_THEME.ui.border,
-    ...Platform.select({
-      web: { boxShadow: "0px 4px 12px rgba(0,0,0,0.03)" } as any,
-      default: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 3,
-      },
-    }),
   },
   avatarCircle: {
     width: 64,
@@ -287,7 +323,6 @@ const styles = StyleSheet.create({
     color: WAITER_THEME.primary,
     letterSpacing: 0.5,
   },
-
   sectionHeader: {
     fontSize: 13,
     fontWeight: "bold",
@@ -297,7 +332,33 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginLeft: 4,
   },
-
+  statsContainer: {
+    flexDirection: 'row',
+    backgroundColor: WAITER_THEME.cardBgLight,
+    borderRadius: 16,
+    paddingVertical: 24,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: WAITER_THEME.ui.border,
+  },
+  statBox: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  statLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: WAITER_THEME.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  statValue: {
+    fontSize: 32,
+    fontWeight: '900',
+    color: WAITER_THEME.textPrimary,
+  },
   controlCard: {
     backgroundColor: WAITER_THEME.cardBgLight,
     borderRadius: 16,
@@ -325,7 +386,6 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   controlSub: { fontSize: 13, color: WAITER_THEME.textSecondary },
-
   diagnosticRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -356,7 +416,6 @@ const styles = StyleSheet.create({
   },
   statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
   statusText: { fontSize: 11, fontWeight: "bold", letterSpacing: 0.5 },
-
   logoutBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -374,7 +433,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
   },
-
   versionText: {
     textAlign: "center",
     marginTop: 32,

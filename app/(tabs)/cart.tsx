@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
@@ -94,6 +94,19 @@ export default function CartTab() {
     setItemNotes((prev) => ({ ...prev, [id]: text }));
   };
 
+  // --- NEW: Confirmation alert before clearing the entire cart ---
+  const confirmClearCart = () => {
+    if (Platform.OS === "web") {
+      const confirm = window.confirm("Are you sure you want to clear your cart?");
+      if (confirm) clearCart();
+      return;
+    }
+    Alert.alert("Clear Cart", "Are you sure you want to remove all items?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Clear All", style: "destructive", onPress: clearCart },
+    ]);
+  };
+
   if (cartTotalQty === 0) {
     return (
       <SafeAreaView style={styles.container}>
@@ -101,15 +114,12 @@ export default function CartTab() {
           <Text style={styles.headerTitle}>Your Cart</Text>
         </View>
         <View style={styles.emptyState}>
-          <Ionicons
-            name="cart-outline"
-            size={80}
-            color={THEME.textSecondary}
-            style={{ opacity: 0.3, marginBottom: 16 }}
-          />
+          <View style={styles.emptyIconCircle}>
+             <Ionicons name="cart-outline" size={60} color={THEME.primary} />
+          </View>
           <Text style={styles.emptyTitle}>Your cart is empty</Text>
           <Text style={styles.emptySub}>
-            Add some delicious items from the menu!
+            Looks like you haven't added anything yet. Let's find some delicious food!
           </Text>
           <TouchableOpacity
             onPress={() => router.push("/(tabs)/menu")}
@@ -130,6 +140,10 @@ export default function CartTab() {
       >
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Review Order</Text>
+          {/* --- NEW: Clear Cart Button --- */}
+          <TouchableOpacity onPress={confirmClearCart} style={styles.clearCartBtn}>
+             <Ionicons name="trash-outline" size={20} color={THEME.danger} />
+          </TouchableOpacity>
         </View>
 
         <ScrollView
@@ -137,7 +151,10 @@ export default function CartTab() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.sectionHeader}>Selected Items</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionHeader}>Selected Items</Text>
+            <Text style={styles.itemCountText}>{cartTotalQty} Items</Text>
+          </View>
 
           {Object.entries(cart).map(([idStr, item]) => {
             const id = Number(idStr);
@@ -156,39 +173,44 @@ export default function CartTab() {
                     </Text>
                   </View>
 
-                  <View style={styles.qtySelector}>
-                    <TouchableOpacity
-                      onPress={() => updateCart(id, -1, item.price, item.name)}
-                      style={styles.qtyBtn}
+                  <View style={styles.controlsContainer}>
+                    {/* --- NEW: Delete Item Button --- */}
+                    <TouchableOpacity 
+                      onPress={() => updateCart(id, -item.qty, item.price, item.name)} 
+                      style={styles.deleteItemBtn}
                     >
-                      <Ionicons
-                        name="remove"
-                        size={18}
-                        color={THEME.textPrimary}
-                      />
+                      <Ionicons name="trash" size={16} color={THEME.danger} />
                     </TouchableOpacity>
-                    <Text style={styles.qtyText}>{item.qty}</Text>
-                    <TouchableOpacity
-                      onPress={() => updateCart(id, 1, item.price, item.name)}
-                      style={styles.qtyBtn}
-                    >
-                      <Ionicons
-                        name="add"
-                        size={18}
-                        color={THEME.textPrimary}
-                      />
-                    </TouchableOpacity>
+                    
+                    <View style={styles.qtySelector}>
+                      <TouchableOpacity
+                        onPress={() => updateCart(id, -1, item.price, item.name)}
+                        style={styles.qtyBtn}
+                      >
+                        <Ionicons name="remove" size={18} color={THEME.primary} />
+                      </TouchableOpacity>
+                      <Text style={styles.qtyText}>{item.qty}</Text>
+                      <TouchableOpacity
+                        onPress={() => updateCart(id, 1, item.price, item.name)}
+                        style={styles.qtyBtn}
+                      >
+                        <Ionicons name="add" size={18} color={THEME.primary} />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
 
-                <TextInput
-                  style={styles.noteInput}
-                  placeholder={`Note for ${item.name} (e.g. No onions)`}
-                  placeholderTextColor={THEME.textSecondary}
-                  value={itemNotes[id] || ""}
-                  onChangeText={(text) => handleItemNoteChange(id, text)}
-                  maxLength={100}
-                />
+                <View style={styles.noteInputContainer}>
+                  <MaterialIcons name="edit-note" size={18} color={THEME.textSecondary} style={styles.noteIcon} />
+                  <TextInput
+                    style={styles.noteInput}
+                    placeholder={`Add note (e.g. less spicy)`}
+                    placeholderTextColor={THEME.textSecondary}
+                    value={itemNotes[id] || ""}
+                    onChangeText={(text) => handleItemNoteChange(id, text)}
+                    maxLength={100}
+                  />
+                </View>
               </View>
             );
           })}
@@ -198,24 +220,30 @@ export default function CartTab() {
           <Text style={[styles.sectionHeader, { marginTop: 10 }]}>
             Order Instructions (Optional)
           </Text>
-          <TextInput
-            style={[styles.noteInput, { height: 80, textAlignVertical: "top" }]}
-            placeholder="Any general requests for the kitchen? (e.g. Extra plates)"
-            placeholderTextColor={THEME.textSecondary}
-            value={orderNote}
-            onChangeText={setOrderNote}
-            multiline
-            maxLength={200}
-          />
+          <View style={[styles.noteInputContainer, { height: 80, alignItems: 'flex-start', paddingTop: 10 }]}>
+             <MaterialIcons name="restaurant" size={18} color={THEME.textSecondary} style={styles.noteIcon} />
+             <TextInput
+               style={[styles.noteInput, { height: 60, textAlignVertical: "top", paddingTop: 0 }]}
+               placeholder="Any general requests for the kitchen? (e.g. Extra plates, quick service)"
+               placeholderTextColor={THEME.textSecondary}
+               value={orderNote}
+               onChangeText={setOrderNote}
+               multiline
+               maxLength={200}
+             />
+          </View>
         </ScrollView>
 
         <View style={styles.footer}>
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total</Text>
-            <Text style={styles.totalValue}>
-              {currency}
-              {cartTotalPrice.toFixed(2)}
-            </Text>
+          <View style={styles.summaryBox}>
+             <View style={styles.totalRow}>
+               <Text style={styles.totalLabel}>Item Total</Text>
+               <Text style={styles.totalValue}>
+                 {currency}
+                 {cartTotalPrice.toFixed(2)}
+               </Text>
+             </View>
+             <Text style={styles.taxDisclaimerText}>*Taxes & fees calculated at checkout</Text>
           </View>
 
           <TouchableOpacity
@@ -245,7 +273,7 @@ export default function CartTab() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: THEME.background,
+    backgroundColor: '#F8FAFC', // Slightly cooler background for modern feel
     maxWidth: 480,
     width: "100%",
     alignSelf: "center",
@@ -257,33 +285,54 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderBottomWidth: 1,
     borderBottomColor: THEME.border,
+    flexDirection: 'row',
     alignItems: "center",
+    justifyContent: "space-between", // Added to push clear button to right
   },
-  headerTitle: { fontSize: 20, fontWeight: "bold", color: THEME.textPrimary },
-  scrollContent: { padding: 20, paddingBottom: 140 },
+  headerTitle: { fontSize: 20, fontWeight: "800", color: THEME.textPrimary },
+  clearCartBtn: {
+    padding: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 8,
+  },
+  scrollContent: { padding: 20, paddingBottom: 160 },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
   sectionHeader: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "bold",
     textTransform: "uppercase",
     letterSpacing: 0.5,
     color: THEME.textSecondary,
-    marginBottom: 15,
+  },
+  itemCountText: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: THEME.primary,
+    backgroundColor: THEME.primaryLight,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
   divider: { height: 1, backgroundColor: THEME.border, marginVertical: 15 },
   cartItemCard: {
     backgroundColor: THEME.cardBg,
     borderRadius: 16,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: '#E2E8F0',
     ...Platform.select({
-      web: { boxShadow: "0px 2px 8px rgba(0,0,0,0.04)" } as any,
+      web: { boxShadow: "0px 4px 12px rgba(0,0,0,0.03)" } as any,
       default: {
         shadowColor: THEME.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.04,
+        shadowRadius: 10,
         elevation: 2,
       },
     }),
@@ -292,37 +341,58 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 12,
+    marginBottom: 16,
   },
   itemName: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: "bold",
     color: THEME.textPrimary,
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  itemPrice: { fontSize: 16, fontWeight: "800", color: THEME.primary },
+  itemPrice: { fontSize: 16, fontWeight: "800", color: THEME.textPrimary },
+  controlsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  deleteItemBtn: {
+    padding: 6,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 8,
+  },
   qtySelector: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: THEME.background,
-    borderRadius: 8,
-    padding: 4,
+    borderRadius: 10,
+    padding: 2,
     borderWidth: 1,
     borderColor: THEME.border,
   },
-  qtyBtn: { padding: 4, paddingHorizontal: 8 },
+  qtyBtn: { padding: 6, paddingHorizontal: 10 },
   qtyText: {
     marginHorizontal: 8,
     fontWeight: "800",
-    fontSize: 15,
+    fontSize: 16,
     color: THEME.textPrimary,
+    minWidth: 18,
+    textAlign: 'center',
+  },
+  noteInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  noteIcon: {
+    marginRight: 8,
   },
   noteInput: {
-    backgroundColor: THEME.background,
-    borderWidth: 1,
-    borderColor: THEME.border,
-    borderRadius: 10,
-    padding: 12,
+    flex: 1,
+    paddingVertical: 12,
     fontSize: 14,
     color: THEME.textPrimary,
   },
@@ -334,63 +404,90 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.cardBg,
     padding: 20,
     paddingBottom: Platform.OS === "ios" ? 30 : 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     borderTopWidth: 1,
     borderColor: THEME.border,
     ...Platform.select({
       default: {
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: -4 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 10,
+        shadowOffset: { width: 0, height: -6 },
+        shadowOpacity: 0.08,
+        shadowRadius: 15,
+        elevation: 15,
       },
     }),
+  },
+  summaryBox: {
+    marginBottom: 20,
+    paddingHorizontal: 4,
   },
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 15,
+    marginBottom: 4,
   },
-  totalLabel: { fontSize: 18, fontWeight: "bold", color: THEME.textPrimary },
-  totalValue: { fontSize: 22, fontWeight: "900", color: THEME.primary },
+  totalLabel: { fontSize: 16, fontWeight: "bold", color: THEME.textSecondary },
+  totalValue: { fontSize: 26, fontWeight: "900", color: THEME.textPrimary },
+  taxDisclaimerText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+  },
   primaryBtn: {
     backgroundColor: THEME.primary,
-    padding: 16,
-    borderRadius: 12,
+    padding: 18,
+    borderRadius: 14,
     alignItems: "center",
     flexDirection: "row",
     justifyContent: "center",
     gap: 8,
     shadowColor: THEME.primary,
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
   },
-  primaryBtnText: { color: "white", fontWeight: "bold", fontSize: 16 },
+  primaryBtnText: { color: "white", fontWeight: "900", fontSize: 17, letterSpacing: 0.5 },
+  
+  // Empty State Styles
   emptyState: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     padding: 40,
   },
+  emptyIconCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: THEME.primaryLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
   emptyTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "900",
     color: THEME.textPrimary,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   emptySub: {
     fontSize: 15,
     color: THEME.textSecondary,
     textAlign: "center",
-    marginBottom: 30,
+    marginBottom: 35,
+    lineHeight: 22,
   },
   browseBtn: {
-    backgroundColor: THEME.primaryLight,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    borderRadius: 12,
+    backgroundColor: THEME.primary,
+    paddingHorizontal: 30,
+    paddingVertical: 16,
+    borderRadius: 14,
+    shadowColor: THEME.primary,
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
   },
-  browseBtnText: { color: THEME.primary, fontWeight: "bold", fontSize: 16 },
+  browseBtnText: { color: "#FFF", fontWeight: "bold", fontSize: 16 },
 });
