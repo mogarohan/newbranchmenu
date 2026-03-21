@@ -14,6 +14,7 @@ import {
 } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   SafeAreaView,
   StyleSheet,
@@ -54,6 +55,7 @@ export default function JoinScreen() {
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(true);
   const [isTableFull, setIsTableFull] = useState(false);
+  const [isTableReserved, setIsTableReserved] = useState(false); // 👇 NEW: Track reservation state
   const [existingHostName, setExistingHostName] = useState<string | null>(null);
   const [showJoinChoice, setShowJoinChoice] = useState(false);
   const [selectedMode, setSelectedMode] = useState<"new" | "join">("new");
@@ -65,11 +67,20 @@ export default function JoinScreen() {
       }
       try {
         const data = await SessionService.validateTable(r, t, token);
+
+        // 👇 NEW: Check if the table is reserved
+        if (data.is_reserved) {
+          setIsTableReserved(true);
+          setValidating(false);
+          return;
+        }
+
         if (data.is_full) {
           setIsTableFull(true);
           setValidating(false);
           return;
         }
+
         if (data.has_active_host) {
           setExistingHostName(data.host_name);
           setShowJoinChoice(true);
@@ -95,7 +106,7 @@ export default function JoinScreen() {
   const echoRef = useRef<any>(null);
   const isMountedRef = useRef(true);
 
-  // 🔥 HYBRID WEBSOCKET + POLLING FALLBACK SYSTEM
+  // HYBRID WEBSOCKET + POLLING FALLBACK SYSTEM
   useEffect(() => {
     isMountedRef.current = true;
     let channel: any = null;
@@ -104,7 +115,6 @@ export default function JoinScreen() {
     const setupRealtime = async () => {
       if (joinStatus === "pending" && tableData && sessionToken) {
         try {
-          // Check instantly just in case Host approved while we were offline
           await SessionService.checkSessionStatus(
             tableData.rId,
             tableData.tId,
@@ -119,7 +129,6 @@ export default function JoinScreen() {
             e.data?.join_status === "pending" &&
             sessionId
           ) {
-            // 1. Try WebSocket for Instant Feedback
             if (!echoRef.current) echoRef.current = initEcho(sessionToken);
             echoRef.current.leaveAllChannels();
 
@@ -133,11 +142,8 @@ export default function JoinScreen() {
               }
             });
 
-            // 2. Setup 3-Second Heartbeat Polling
-            // If the WebSockets fail or the network blips, this guarantees they get in.
             pollInterval = setInterval(async () => {
               try {
-                // If this succeeds (returns 200), we are officially approved!
                 await SessionService.checkSessionStatus(
                   tableData.rId,
                   tableData.tId,
@@ -146,7 +152,6 @@ export default function JoinScreen() {
                 );
                 if (isMountedRef.current) setJoinStatus("approved");
               } catch (err: any) {
-                // Keep waiting unless explicitly rejected
                 if (
                   err?.data?.join_status === "rejected" &&
                   isMountedRef.current
@@ -196,8 +201,17 @@ export default function JoinScreen() {
     setLoading(true);
     try {
       await startSession(customerName, selectedMode);
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      if (
+        e?.data?.message === "TABLE_RESERVED" ||
+        e?.message?.includes("TABLE_RESERVED")
+      ) {
+        // Redundancy check in case they bypass validation
+        setIsTableReserved(true);
+      } else {
+        console.error(e);
+        Alert.alert("Error", "Could not join table. Please try again.");
+      }
     } finally {
       setLoading(false);
     }
@@ -288,6 +302,33 @@ export default function JoinScreen() {
           </Text>
         </TouchableOpacity>
       </SafeAreaView>
+    );
+  }
+
+  // 👇 NEW: UI FOR RESERVED TABLE 👇
+  if (isTableReserved) {
+    return (
+      <View style={styles.centerContainer}>
+        <MaterialIcons name="calendar-today" size={80} color="#ec4899" />
+        <Text style={styles.welcomeTitle}>Table Reserved</Text>
+        <Text style={styles.subtitle}>
+          This table is currently reserved for upcoming guests. Please scan the
+          QR code on a different available table.
+        </Text>
+        <TouchableOpacity
+          onPress={async () => await Updates.reloadAsync()}
+          style={[
+            styles.joinButton,
+            {
+              width: "80%",
+              marginTop: 32,
+              backgroundColor: THEME.textSecondary,
+            },
+          ]}
+        >
+          <Text style={styles.joinButtonText}>Check Again</Text>
+        </TouchableOpacity>
+      </View>
     );
   }
 
