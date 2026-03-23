@@ -43,21 +43,24 @@ interface WaiterUser {
   email?: string;
   name: string;
   restaurant_id: number;
-  branch_id?: number | null; // 🔥 ADDED FOR MULTI-BRANCH
+  branch_id?: number | null;
   role: string;
+  total_served?: number; // 👈 ADDED THIS
 }
+
 interface TableUpdatePayload {
   tableId: number;
   status: "available" | "occupied" | "cleaning";
   updatedAt: number;
-  branchId?: number | null; // 🔥 ADDED FOR MULTI-BRANCH
+  branchId?: number | null;
 }
+
 interface AlertPayload {
   eventId: string;
   tableNumber: string | number;
   customerName: string;
   timestamp: number;
-  branch_id?: number | null; // 🔥 ADDED FOR MULTI-BRANCH
+  branch_id?: number | null;
 }
 
 interface WaiterContextType {
@@ -75,6 +78,7 @@ interface WaiterContextType {
   toggleShift: () => Promise<void>;
   connectSocket: () => void;
   disconnectSocket: () => void;
+  refreshProfile: () => Promise<void>; // 👈 EXPORTED NEW FUNCTION
 }
 
 const WaiterContext = createContext<WaiterContextType | undefined>(undefined);
@@ -222,7 +226,6 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
       if (order.restaurant_id !== waiter.restaurant_id) return;
       if (event.event_id && trackEvent(event.event_id)) return;
 
-      // 🔥 CRITICAL FIX: Ignore orders from other branches for Notification Badges
       if (
         waiter.branch_id &&
         event.branch_id &&
@@ -240,7 +243,6 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
         return;
       if (event.event_id && trackEvent(event.event_id)) return;
 
-      // 🔥 CRITICAL FIX: Ignore alerts from other branches
       if (
         waiter.branch_id &&
         event.branch_id &&
@@ -253,7 +255,7 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
         tableNumber: event.table_number || event.table_id || "?",
         customerName: event.customer_name || "Guest",
         timestamp: Date.now(),
-        branch_id: event.branch_id, // 🔥 Pass down
+        branch_id: event.branch_id,
       });
 
       setAlertsCount((prev) => prev + 1);
@@ -263,7 +265,6 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
       if (event.restaurantId && event.restaurantId !== waiter.restaurant_id)
         return;
 
-      // 🔥 CRITICAL FIX: Ignore table updates from other branches
       if (
         waiter.branch_id &&
         event.branchId &&
@@ -275,7 +276,7 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
         tableId: event.tableId,
         status: event.status,
         updatedAt: event.updatedAt,
-        branchId: event.branchId, // 🔥 Pass down
+        branchId: event.branchId,
       });
     });
   };
@@ -330,6 +331,18 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
     await Storage.setItemAsync("waiter_shift_active", String(newState));
   };
 
+  // 👇 NEW: Safe Profile Refresh Function
+  const refreshProfile = async () => {
+    if (!token) return;
+    try {
+      const profile = await WaiterService.profile.get(token);
+      setWaiter(profile);
+      await Storage.setItemAsync("waiter_data", JSON.stringify(profile));
+    } catch (e) {
+      console.log("Profile refresh failed:", e);
+    }
+  };
+
   const contextValue = useMemo(
     () => ({
       token,
@@ -346,6 +359,7 @@ export function WaiterProvider({ children }: { children: React.ReactNode }) {
       toggleShift,
       connectSocket,
       disconnectSocket,
+      refreshProfile, // 👈 Included in Context
     }),
     [
       token,

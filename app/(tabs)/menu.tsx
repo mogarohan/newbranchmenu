@@ -78,6 +78,13 @@ export default function MenuScreen() {
   const echoRef = useRef<any>(null);
   const processedEventsRef = useRef<Set<string>>(new Set());
 
+  // 👇 FIX: Safely extract sessionId with a guaranteed fallback to tableData.tId
+  const currentSessionId =
+    menuData?.session?.id ||
+    menuData?.session?.session_id ||
+    menuData?.session_id ||
+    tableData?.tId;
+
   useEffect(() => {
     const loadMenu = async () => {
       if (!tableData || !sessionToken) return;
@@ -106,13 +113,8 @@ export default function MenuScreen() {
   useEffect(() => {
     let isMounted = true;
     const setupHostListener = async () => {
-      // 🔥 FIX: Check multiple paths just in case Laravel formats the JSON differently
-      const sessionId =
-        menuData?.session?.id ||
-        menuData?.session?.session_id ||
-        menuData?.session_id;
-
-      if (!tableData?.tId || !sessionToken || !isPrimary || !sessionId) return;
+      if (!tableData?.tId || !sessionToken || !isPrimary || !currentSessionId)
+        return;
       try {
         const res = await SessionService.getPendingRequests(
           tableData.tId,
@@ -133,7 +135,7 @@ export default function MenuScreen() {
         echoRef.current = initEcho(sessionToken);
       }
 
-      const channel = echoRef.current.private(`session.${sessionId}`);
+      const channel = echoRef.current.private(`session.${currentSessionId}`);
 
       channel.listen(".GuestJoinRequested", (event: any) => {
         if (!isMounted) return;
@@ -157,14 +159,15 @@ export default function MenuScreen() {
 
     return () => {
       isMounted = false;
-      if (echoRef.current && sessionId) {
+      // 👇 FIX: Use the guaranteed currentSessionId to safely unbind during unmount
+      if (echoRef.current && currentSessionId) {
         if (echoRef.current.connector?.pusher?.connection) {
           echoRef.current.connector.pusher.connection.unbind_all();
         }
-        echoRef.current.leave(`session.${sessionId}`);
+        echoRef.current.leave(`session.${currentSessionId}`);
       }
     };
-  }, [isPrimary, tableData?.tId, sessionToken, menuData?.session?.id]);
+  }, [isPrimary, tableData?.tId, sessionToken, currentSessionId]);
 
   const handleRequestResponse = async (
     id: number,
@@ -218,7 +221,6 @@ export default function MenuScreen() {
   };
 
   const handleCallWaiter = () => {
-    // 🔥 NEW: Tell TypeScript to stop if the token is null!
     if (!sessionToken) return;
 
     Alert.alert("Call Waiter", "Do you need a waiter at your table?", [
@@ -227,7 +229,7 @@ export default function MenuScreen() {
         text: "Yes",
         onPress: async () => {
           try {
-            await SessionService.callWaiter(sessionToken); // Red underline is now gone!
+            await SessionService.callWaiter(sessionToken);
             Alert.alert("Success", "A waiter has been notified.");
           } catch (error) {
             Alert.alert("Error", "Could not notify the waiter at this time.");
@@ -256,7 +258,6 @@ export default function MenuScreen() {
     ? customerName
     : menuData?.session?.host_name || "Host";
 
-  // 🔥 Web & Mobile Performance Fix: Search Filtering is now memoized to prevent render lag!
   const filteredSearchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const query = searchQuery.toLowerCase().trim();
@@ -767,7 +768,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: THEME.background,
-    // 🔥 FIX: Center layout on web desktop
     maxWidth: 480,
     width: "100%",
     alignSelf: "center",

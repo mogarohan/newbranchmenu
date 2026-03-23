@@ -1,65 +1,95 @@
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
+import * as Print from "expo-print";
 import { useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Sharing from "expo-sharing";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   Platform,
   RefreshControl,
   SafeAreaView,
   ScrollView,
-  Share, // 👈 Safe Native Share for Mobile
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+
 import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
 import { initEcho } from "../../services/echo";
 import { OrderService } from "../../services/order.service";
 
 export default function BillsTab() {
-  const { sessionToken, tableData, menuData, orders, setOrders } = useSession();
+  const {
+    sessionToken,
+    tableData,
+    menuData,
+    orders,
+    setOrders,
+    isPrimary,
+    customerName,
+  } = useSession();
   const { billRequested } = useLocalSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false); // 👈 Added downloading state
   const [connectionStatus, setConnectionStatus] = useState<
     "connecting" | "live" | "offline"
   >("connecting");
+  const [paymentData, setPaymentData] = useState<any>(null);
 
   const echoRef = useRef<any>(null);
   const processedEventsRef = useRef<Set<string>>(new Set());
 
   const currency = menuData?.restaurant?.currency_symbol || "₹";
-  const sessionId = menuData?.session?.id || menuData?.session?.session_id;
+  const sessionId =
+    menuData?.session?.id || menuData?.session?.session_id || tableData?.tId;
 
   const mergeOrders = (incomingOrders: any[]) => {
     setOrders((prev) => {
       const map = new Map(prev.map((o) => [o.id, o]));
       incomingOrders.forEach((o) => map.set(o.id, o));
       return Array.from(map.values()).sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+        (a, b) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
       );
     });
   };
 
-  const fetchOrders = useCallback(async (signal?: AbortSignal) => {
-    if (!sessionToken) return;
-    try {
-      const data = await OrderService.getOrders(sessionToken, signal);
-      mergeOrders(Array.isArray(data) ? data : []);
-    } catch (e: any) {
-      if (e.name !== "AbortError") {
-        console.error("Failed to fetch orders", e);
+  const fetchOrders = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!sessionToken) return;
+      try {
+        const data = await OrderService.getOrders(sessionToken, signal);
+        const incomingOrders = Array.isArray(data) ? data : data.orders || [];
+        mergeOrders(incomingOrders);
+
+        if (data.payment) {
+          setPaymentData(data.payment);
+        }
+      } catch (e: any) {
+        if (e.name !== "AbortError") {
+          console.error("Failed to fetch orders", e);
+          if (e.status === 403 || e.status === 404) {
+            console.log("Session closed or table cleared. Handled silently.");
+          }
+        }
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [sessionToken]);
+    },
+    [sessionToken],
+  );
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -88,31 +118,40 @@ export default function BillsTab() {
     }
     const echoInstance = echoRef.current;
 
-    echoInstance.connector.pusher.connection.bind("state_change", (states: any) => {
-      if (!isMounted) return;
-      if (states.current === "connected") setConnectionStatus("live");
-      else if (states.current === "connecting") setConnectionStatus("connecting");
-      else if (["disconnected", "unavailable", "failed"].includes(states.current)) {
-        setConnectionStatus("offline");
-      }
-    });
+    echoInstance.connector.pusher.connection.bind(
+      "state_change",
+      (states: any) => {
+        if (!isMounted) return;
+        if (states.current === "connected") setConnectionStatus("live");
+        else if (states.current === "connecting")
+          setConnectionStatus("connecting");
+        else if (
+          ["disconnected", "unavailable", "failed"].includes(states.current)
+        ) {
+          setConnectionStatus("offline");
+        }
+      },
+    );
 
     echoInstance.connector.pusher.connection.bind("error", () => {
       if (!isMounted) return;
       setConnectionStatus("offline");
     });
 
-    echoInstance.private(`session.${sessionId}`).listen(".OrderStatusUpdated", (event: any) => {
-      if (!isMounted) return;
-      const eventId = event.event_id;
-      if (eventId) {
-        if (processedEventsRef.current.has(eventId)) return;
-        processedEventsRef.current.add(eventId);
-      }
-      if (event.order) {
-        mergeOrders([event.order]);
-      }
-    });
+    echoInstance
+      .private(`session.${sessionId}`)
+      .listen(".OrderStatusUpdated", (event: any) => {
+        if (!isMounted) return;
+        const eventId = event.event_id;
+        if (eventId) {
+          if (processedEventsRef.current.has(eventId)) return;
+          processedEventsRef.current.add(eventId);
+        }
+        if (event.order) {
+          mergeOrders([event.order]);
+          fetchOrders();
+        }
+      });
 
     return () => {
       isMounted = false;
@@ -125,36 +164,56 @@ export default function BillsTab() {
         echoRef.current = null;
       }
     };
-  }, [sessionToken, sessionId]);
+  }, [sessionToken, sessionId, fetchOrders]);
 
   const validOrders = useMemo(() => {
     return Array.isArray(orders)
-      ? orders.filter(o => {
-          const s = o.status?.toLowerCase() || "";
-          return s !== "cancelled" && s !== "rejected";
-        })
+      ? orders.filter(
+          (o) =>
+            o.status?.toLowerCase() !== "cancelled" &&
+            o.status?.toLowerCase() !== "rejected",
+        )
       : [];
   }, [orders]);
 
-  const { consolidatedItems, totalBill } = useMemo(() => {
+  const isBillPaid =
+    validOrders.length > 0 &&
+    validOrders.every((o) => o.status?.toLowerCase() === "completed");
+
+  useEffect(() => {
+    if (isBillPaid && echoRef.current && sessionId) {
+      if (echoRef.current.connector?.pusher?.connection) {
+        echoRef.current.connector.pusher.connection.unbind_all();
+      }
+      echoRef.current.leave(`session.${sessionId}`);
+      echoRef.current.disconnect();
+      echoRef.current = null;
+      setConnectionStatus("offline");
+    }
+  }, [isBillPaid, sessionId]);
+
+  const { consolidatedItems, rawSubtotal, totalItemsCount } = useMemo(() => {
     const itemMap = new Map();
     let total = 0;
+    let qtyCount = 0;
 
-    validOrders.forEach(order => {
-      total += parseFloat(String(order.total_amount)) || 0;
-
+    validOrders.forEach((order) => {
       if (Array.isArray(order.items)) {
-        order.items.forEach(item => {
-          const key = item.menu_item_id || item.item_name; 
-          const itemName = item.menu_item?.name || item.item_name || "Menu Item";
-          
-          const itemPrice = parseFloat(String(item.unit_price || item.price || 0)) || 0;
+        order.items.forEach((item) => {
+          const key = item.menu_item_id || item.item_name;
+          const itemName =
+            item.menu_item?.name || item.item_name || "Menu Item";
+          const itemPrice =
+            parseFloat(String(item.unit_price || item.price || 0)) || 0;
           const itemQty = parseInt(String(item.quantity || 1), 10) || 1;
-          
+
+          total += itemPrice * itemQty;
+          qtyCount += itemQty;
+
           if (itemMap.has(key)) {
             const existing = itemMap.get(key);
             existing.quantity += itemQty;
-            existing.total_price += (itemPrice * itemQty);
+            existing.total_price += itemPrice * itemQty;
           } else {
             itemMap.set(key, {
               id: key,
@@ -170,119 +229,159 @@ export default function BillsTab() {
 
     return {
       consolidatedItems: Array.from(itemMap.values()),
-      totalBill: total || 0,
+      rawSubtotal: total || 0,
+      totalItemsCount: qtyCount || 0,
     };
   }, [validOrders]);
 
-  // 🔥 HTML DOWNLOAD LOGIC 🔥
+  const finalSubtotal = parseFloat(paymentData?.subtotal || rawSubtotal || 0);
+  const finalDiscount = parseFloat(paymentData?.discount_amount || 0);
+  const finalTax = parseFloat(paymentData?.tax_amount || 0);
+  const finalGrandTotal = parseFloat(
+    paymentData?.amount || finalSubtotal - finalDiscount + finalTax || 0,
+  );
+
+  const restaurantName = menuData?.restaurant?.name || "Restaurant Bill";
+  const tableNum = tableData?.tId || "-";
+  const displayHostName = isPrimary
+    ? customerName
+    : menuData?.session?.host_name || "Customer";
+
+  // 🔥 DIRECT PDF DOWNLOAD LOGIC 🔥
   const handleDownloadBill = async () => {
-    // 🔥 100% DYNAMIC: Backend se jo restaurant ka naam aayega, wahi use hoga
-    const restaurantName = menuData?.restaurant?.name || "Restaurant Bill";
-    const tableNum = tableData?.tId || "-";
+    if (!isBillPaid) {
+      Alert.alert(
+        "Notice",
+        "The bill cannot be downloaded until payment is completed at the counter.",
+      );
+      return;
+    }
+
+    setIsDownloading(true);
+
     const dateStr = new Date().toLocaleString();
+    let itemsHtml = "";
 
-    if (Platform.OS === "web") {
-      // 🌐 WEB: Direct HTML Download (No PDF packages needed)
-      let itemsHtml = '';
-      consolidatedItems.forEach(item => {
-        itemsHtml += `
-          <tr>
-            <td style="padding: 8px 4px; border-bottom: 1px dashed #ccc; font-size: 14px;">${item.quantity}x</td>
-            <td style="padding: 8px 4px; border-bottom: 1px dashed #ccc;">
-              <strong style="font-size: 14px;">${item.name}</strong><br>
-              <small style="color: #666; font-size: 12px;">(${currency}${(item.unit_price || 0).toFixed(2)})</small>
-            </td>
-            <td style="padding: 8px 4px; border-bottom: 1px dashed #ccc; text-align: right; font-size: 14px; font-weight: bold;">${currency}${(item.total_price || 0).toFixed(2)}</td>
-          </tr>
-        `;
-      });
-
-      const receiptHTML = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no" />
-          <title>Bill - Table ${tableNum}</title>
-          <style>
-            body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; padding: 20px; color: #000; background: #fff; max-width: 400px; margin: auto; }
-            .header { text-align: center; margin-bottom: 20px; }
-            .header h2 { margin: 5px 0; font-size: 28px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; color: #111; }
-            .header p { margin: 2px 0; font-size: 15px; color: #444; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-            th { text-align: left; border-bottom: 2px solid #000; padding: 8px 4px; font-size: 15px; text-transform: uppercase; }
-            th.right { text-align: right; }
-            .total-row { display: flex; justify-content: space-between; font-size: 20px; font-weight: 900; border-top: 2px solid #000; padding-top: 15px; margin-top: 15px; }
-            .footer { text-align: center; margin-top: 40px; font-size: 14px; font-weight: bold; color: #222; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h2>${restaurantName}</h2>
-            <p>Table ${tableNum}</p>
-            <p style="font-size: 12px; color: #666;">${dateStr}</p>
+    consolidatedItems.forEach((item) => {
+      itemsHtml += `
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; font-size: 14px; margin-bottom: 12px; color: #1f2937;">
+          <div>
+             <span style="font-weight: 700;">
+               <span style="color: #6b7280; margin-right: 4px;">${item.quantity}x</span>${item.name}
+             </span>
+             <br>
+             <span style="font-size: 10px; color: #6b7280; text-transform: uppercase;">[ITEM]</span>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 15%;">Qty</th>
-                <th style="width: 60%;">Item</th>
-                <th style="width: 25%; text-align: right;">Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsHtml}
-            </tbody>
-          </table>
-          <div class="total-row">
-            <span>GRAND TOTAL</span>
-            <span>${currency}${(totalBill || 0).toFixed(2)}</span>
-          </div>
-          <div class="footer">
-            Thank You for Visiting!
-          </div>
-        </body>
-        </html>
+          <span style="font-weight: 800; white-space: nowrap;">
+            ${currency}${(item.total_price || 0).toFixed(2)}
+          </span>
+        </div>
       `;
+    });
 
-      try {
-        const blob = new Blob([receiptHTML], { type: "text/html;charset=utf-8" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.setAttribute("download", `Bill_Table_${tableNum}.html`);
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      } catch (err) {
-        console.error("Download Error: ", err);
-      }
-    } else {
-      // 📱 MOBILE: Native Text Share via WhatsApp/Messages
-      try {
-        let receiptText = `🧾 *${restaurantName.toUpperCase()}* 🧾\n`;
-        receiptText += `Table: ${tableNum}\n`;
-        receiptText += `Date: ${dateStr}\n`;
-        receiptText += `--------------------------------\n`;
-        
-        consolidatedItems.forEach(item => {
-          receiptText += `${item.quantity}x ${item.name}\n`;
-          receiptText += `   ${currency}${(item.total_price || 0).toFixed(2)} (${currency}${(item.unit_price || 0).toFixed(2)}/ea)\n`;
-        });
-        
-        receiptText += `--------------------------------\n`;
-        receiptText += `*GRAND TOTAL: ${currency}${(totalBill || 0).toFixed(2)}*\n`;
-        receiptText += `--------------------------------\n`;
-        receiptText += `Thank You for Visiting!\n`;
+    const receiptHTML = `
+      <div style="padding: 30px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #111827; background: #ffffff; max-width: 500px; margin: auto;">
+        <div style="text-align: center; font-size: 24px; font-weight: 900; color: #111827; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px;">${restaurantName}</div>
+        <div style="text-align: center; font-size: 12px; color: #6b7280; margin-bottom: 30px;">${dateStr}</div>
 
-        await Share.share({
-          message: receiptText,
-          title: `Bill_Table_${tableNum}`,
+        <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px;">
+          <div style="text-align: center; font-size: 22px; font-weight: 900; margin-bottom: 4px;">TABLE ${tableNum}</div>
+          <div style="text-align: center; font-size: 10px; font-weight: 700; color: #6b7280; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 24px;">FINAL BILLING SUMMARY</div>
+
+          <div style="background-color: #f3f4f6; padding: 10px 14px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 700; margin-bottom: 24px;">
+            <span>👑 HOST: ${displayHostName}</span>
+            <span style="font-weight: 400; font-size: 12px; color: #6b7280;">(${totalItemsCount} Items)</span>
+          </div>
+
+          <div style="margin-bottom: 24px;">
+            ${itemsHtml}
+          </div>
+
+          <div style="border-top: 2px solid #111827; padding-top: 16px; margin-top: 24px;">
+            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #4b5563; margin-bottom: 8px;">
+              <span>Total Orders Delivered:</span>
+              <span>${totalItemsCount}</span>
+            </div>
+            
+            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #111827; font-weight: 700; margin-bottom: 8px; margin-top: 12px;">
+              <span>Subtotal:</span>
+              <span>${currency}${finalSubtotal.toFixed(2)}</span>
+            </div>
+
+            ${
+              finalDiscount > 0
+                ? `
+            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #059669; margin-bottom: 8px;">
+              <span>Discount:</span>
+              <span style="font-weight: 700;">- ${currency}${finalDiscount.toFixed(2)}</span>
+            </div>`
+                : ""
+            }
+
+            ${
+              finalTax > 0
+                ? `
+            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #dc2626; margin-bottom: 8px;">
+              <span>Tax:</span>
+              <span style="font-weight: 700;">+ ${currency}${finalTax.toFixed(2)}</span>
+            </div>`
+                : ""
+            }
+
+            <div style="display: flex; justify-content: space-between; font-size: 20px; font-weight: 900; color: #111827; margin-top: 16px; padding-top: 12px; border-top: 1px dashed #d1d5db;">
+              <span>GRAND TOTAL</span>
+              <span>${currency}${finalGrandTotal.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 40px; font-size: 12px; font-weight: 600; color: #6b7280;">
+          Thank You for Visiting!
+        </div>
+      </div>
+    `;
+
+    try {
+      if (Platform.OS === "web") {
+        // 🔥 FIX FOR WEB: Dynamically load html2pdf.js to force a real PDF download instead of the print dialog
+        const generateWebPDF = () => {
+          const opt = {
+            margin: 0.5,
+            filename: `Bill_Table_${tableNum}.pdf`,
+            image: { type: "jpeg", quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
+          };
+
+          (window as any)
+            .html2pdf()
+            .set(opt)
+            .from(receiptHTML)
+            .save()
+            .then(() => setIsDownloading(false));
+        };
+
+        if (!(window as any).html2pdf) {
+          const script = document.createElement("script");
+          script.src =
+            "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+          script.onload = generateWebPDF;
+          document.head.appendChild(script);
+        } else {
+          generateWebPDF();
+        }
+      } else {
+        // iOS / Android logic remains unchanged
+        const { uri } = await Print.printToFileAsync({ html: receiptHTML });
+        await Sharing.shareAsync(uri, {
+          UTI: ".pdf",
+          mimeType: "application/pdf",
         });
-      } catch (error: any) {
-        Alert.alert("Error", "Could not share bill.");
+        setIsDownloading(false);
       }
+    } catch (err) {
+      setIsDownloading(false);
+      Alert.alert("Error", "Could not generate PDF bill.");
     }
   };
 
@@ -290,14 +389,24 @@ export default function BillsTab() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Final Bill</Text>
-        <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh} disabled={refreshing || loading}>
+        <TouchableOpacity
+          style={styles.refreshBtn}
+          onPress={onRefresh}
+          disabled={refreshing || loading}
+        >
           <Ionicons name="reload" size={18} color={THEME.textPrimary} />
         </TouchableOpacity>
       </View>
 
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={THEME.primary} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={THEME.primary}
+          />
+        }
       >
         {loading && consolidatedItems.length === 0 ? (
           <View style={styles.emptyState}>
@@ -306,32 +415,144 @@ export default function BillsTab() {
           </View>
         ) : consolidatedItems.length === 0 ? (
           <View style={styles.emptyState}>
-            <Ionicons name="receipt-outline" size={64} color={THEME.textSecondary} style={{ opacity: 0.3 }} />
+            <Ionicons
+              name="receipt-outline"
+              size={64}
+              color={THEME.textSecondary}
+              style={{ opacity: 0.3 }}
+            />
             <Text style={styles.emptyStateTitle}>No items billed yet.</Text>
-            <Text style={styles.emptyStateText}>Your ordered items will appear here.</Text>
+            <Text style={styles.emptyStateText}>
+              Your ordered items will appear here.
+            </Text>
           </View>
-        ) : ( 
-          <View style={styles.centerCard}>
-            <View style={styles.iconCircle}>
-              <MaterialIcons name="check-circle" size={50} color={THEME.success} />
-            </View>
-            <Text style={styles.readyText}>Your Bill is Ready!</Text>
-            <Text style={styles.subText}>Table {tableData?.tId || "-"}</Text>
+        ) : (
+          <View style={{ padding: 16 }}>
+            {/* EXACT MATCH TO MANAGER RECEIPT CARD */}
+            <View style={styles.receiptCard}>
+              <Text style={styles.receiptTitle}>Table {tableNum}</Text>
+              <Text style={styles.receiptSubtitle}>FINAL BILLING SUMMARY</Text>
 
-            <View style={styles.totalBox}>
-              <Text style={styles.totalLabel}>Grand Total</Text>
-              <Text style={styles.totalValue}>{currency}{(totalBill || 0).toFixed(2)}</Text>
+              <View style={styles.hostBadge}>
+                <Text style={styles.hostBadgeText}>
+                  👑 HOST: {displayHostName}
+                </Text>
+                <Text style={styles.hostBadgeSub}>
+                  ({totalItemsCount} Items)
+                </Text>
+              </View>
+
+              <View style={styles.itemsContainer}>
+                {consolidatedItems.map((item, idx) => (
+                  <View key={idx} style={styles.itemRow}>
+                    <View style={{ flexDirection: "row", flex: 1 }}>
+                      <Text style={styles.itemQty}>{item.quantity}x</Text>
+                      <View>
+                        <Text style={styles.itemName}>{item.name}</Text>
+                        <Text style={styles.itemCat}>[ITEM]</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.itemPrice}>
+                      {currency}
+                      {(item.total_price || 0).toFixed(2)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+
+              <View style={styles.summarySection}>
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>
+                    Total Orders Delivered:
+                  </Text>
+                  <Text style={styles.summaryValue}>{totalItemsCount}</Text>
+                </View>
+
+                <View style={[styles.summaryRow, { marginTop: 12 }]}>
+                  <Text
+                    style={[
+                      styles.summaryLabel,
+                      { fontWeight: "700", color: "#111827" },
+                    ]}
+                  >
+                    Subtotal:
+                  </Text>
+                  <Text style={styles.summaryValue}>
+                    {currency}
+                    {finalSubtotal.toFixed(2)}
+                  </Text>
+                </View>
+
+                {finalDiscount > 0 && (
+                  <View style={styles.summaryRow}>
+                    <Text
+                      style={[styles.summaryLabel, { color: THEME.success }]}
+                    >
+                      Discount:
+                    </Text>
+                    <Text
+                      style={[styles.summaryValue, { color: THEME.success }]}
+                    >
+                      -{currency}
+                      {finalDiscount.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+
+                {finalTax > 0 && (
+                  <View style={styles.summaryRow}>
+                    <Text
+                      style={[styles.summaryLabel, { color: THEME.danger }]}
+                    >
+                      Tax:
+                    </Text>
+                    <Text
+                      style={[styles.summaryValue, { color: THEME.danger }]}
+                    >
+                      +{currency}
+                      {finalTax.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+
+                <View style={styles.grandTotalRow}>
+                  <Text style={styles.grandTotalLabel}>GRAND TOTAL</Text>
+                  <Text style={styles.grandTotalValue}>
+                    {currency}
+                    {finalGrandTotal.toFixed(2)}
+                  </Text>
+                </View>
+              </View>
             </View>
 
-            <TouchableOpacity 
-              style={styles.downloadBigBtn} 
-              onPress={handleDownloadBill} 
-            >
-              <Ionicons name="cloud-download-outline" size={24} color="#fff" />
-              <Text style={styles.downloadBigBtnText}>
-                {Platform.OS === 'web' ? "Download Bill" : "Share Bill"}
-              </Text>
-            </TouchableOpacity>
+            {isBillPaid ? (
+              <TouchableOpacity
+                style={styles.downloadBigBtn}
+                onPress={handleDownloadBill}
+                disabled={isDownloading}
+              >
+                {isDownloading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="document-text-outline"
+                      size={24}
+                      color="#fff"
+                    />
+                    <Text style={styles.downloadBigBtnText}>
+                      Download PDF Bill
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.unpaidWarning}>
+                <Text style={styles.unpaidText}>
+                  Please pay at the counter to download your final receipt.
+                </Text>
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
@@ -342,7 +563,7 @@ export default function BillsTab() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: "#F8FAFC",
     maxWidth: 480,
     width: "100%",
     alignSelf: "center",
@@ -370,11 +591,7 @@ const styles = StyleSheet.create({
     borderColor: THEME.border,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)),
   },
-  scrollContent: { 
-    flexGrow: 1, 
-    justifyContent: 'center', 
-    padding: 20 
-  },
+  scrollContent: { flexGrow: 1, paddingBottom: 40 },
   emptyState: {
     flex: 1,
     justifyContent: "center",
@@ -393,73 +610,90 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     textAlign: "center",
   },
-  
-  centerCard: {
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    padding: 30,
-    alignItems: 'center',
+
+  receiptCard: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 24,
+    width: "100%",
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: "#E5E7EB",
+    marginBottom: 24,
     ...Platform.select({
       default: {
-        shadowColor: THEME.primary,
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.1,
-        shadowRadius: 15,
-        elevation: 5,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 4,
+        elevation: 2,
       },
     }),
   },
-  iconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
+  receiptTitle: {
+    fontSize: 22,
+    fontWeight: "900",
+    textAlign: "center",
+    color: "#111827",
+    textTransform: "uppercase",
   },
-  readyText: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: THEME.textPrimary,
-    marginBottom: 4,
+  receiptSubtitle: {
+    fontSize: 10,
+    fontWeight: "700",
+    textAlign: "center",
+    color: "#6B7280",
+    letterSpacing: 1.5,
+    marginBottom: 24,
   },
-  subText: {
-    fontSize: 16,
-    color: THEME.textSecondary,
-    marginBottom: 30,
+  hostBadge: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    backgroundColor: "#F3F4F6",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 24,
   },
-  totalBox: {
-    width: '100%',
-    backgroundColor: THEME.background,
-    padding: 20,
-    borderRadius: 16,
-    alignItems: 'center',
-    marginBottom: 30,
-    borderWidth: 1,
-    borderColor: THEME.border,
-    borderStyle: 'dashed',
+  hostBadgeText: { fontWeight: "700", fontSize: 14, color: "#111827" },
+  hostBadgeSub: { fontWeight: "400", fontSize: 12, color: "#6B7280" },
+  itemsContainer: { marginBottom: 24 },
+  itemRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
   },
-  totalLabel: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: THEME.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
+  itemQty: { color: "#6B7280", fontWeight: "700", marginRight: 6 },
+  itemName: { fontWeight: "700", color: "#111827", fontSize: 14 },
+  itemCat: { fontSize: 10, color: "#6B7280", marginTop: 2 },
+  itemPrice: { fontWeight: "800", color: "#111827", fontSize: 14 },
+  summarySection: {
+    borderTopWidth: 2,
+    borderTopColor: "#111827",
+    paddingTop: 16,
+    marginTop: 12,
+  },
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     marginBottom: 8,
   },
-  totalValue: {
-    fontSize: 40,
-    fontWeight: '900',
-    color: THEME.primary,
+  summaryLabel: { fontSize: 14, color: "#4B5563" },
+  summaryValue: { fontSize: 14, color: "#111827", fontWeight: "700" },
+  grandTotalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 16,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#D1D5DB",
+    borderStyle: "dashed",
   },
+  grandTotalLabel: { fontSize: 20, fontWeight: "900", color: "#111827" },
+  grandTotalValue: { fontSize: 20, fontWeight: "900", color: "#111827" },
+
   downloadBigBtn: {
-    width: '100%',
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
     backgroundColor: THEME.primary,
     paddingVertical: 18,
     borderRadius: 16,
@@ -470,9 +704,14 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 6,
   },
-  downloadBigBtnText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  }
+  downloadBigBtnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  unpaidWarning: {
+    backgroundColor: "#fffbeb",
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#fde68a",
+    width: "100%",
+  },
+  unpaidText: { color: "#d97706", textAlign: "center", fontWeight: "600" },
 });

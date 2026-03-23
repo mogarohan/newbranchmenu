@@ -1,6 +1,6 @@
 import { MaterialIcons } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router"; // 👈 useFocusEffect add kiya gaya hai
-import React, { useCallback, useState } from "react"; // 👈 hooks add kiye gaye hain
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -15,35 +15,30 @@ import {
 } from "react-native";
 import { WAITER_THEME } from "../../../constants/theme";
 import { useWaiter } from "../../../context/WaiterContext";
-import api from "../../../services/api"; // 👈 API service import kiya gaya hai
 
 export default function WaiterProfileScreen() {
-  const { waiter, shiftActive, toggleShift, logout, socketConnected, setWaiter } =
-    useWaiter();
-  
-  const [isRefreshing, setIsRefreshing] = useState(false); // 👈 Loading state for stats update
+  const {
+    waiter,
+    shiftActive,
+    toggleShift,
+    logout,
+    socketConnected,
+    refreshProfile,
+  } = useWaiter(); // 👈 Added refreshProfile here
 
-  // 🔥 BACKEND SE LATEST STATS FETCH KARNE KA FUNCTION
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Use Context Function to refresh
   const refreshProfileStats = useCallback(async () => {
-    try {
-      setIsRefreshing(true);
-      // Backend route: /waiter/profile jo database se taza total_served laayega
-      const response = await api.get("/waiter/profile"); 
-      if (response.data) {
-        setWaiter(response.data); // Context state ko naye data se update kar rahe hain
-      }
-    } catch (error) {
-      console.log("Profile stats refresh failed:", error);
-    } finally {
-      setIsRefreshing(false);
-    }
-  }, [setWaiter]);
+    setIsRefreshing(true);
+    await refreshProfile();
+    setIsRefreshing(false);
+  }, [refreshProfile]);
 
-  // 🔥 JAB BHI USER IS SCREEN PAR AAYEGA, DATA AUTO REFRESH HOGA
   useFocusEffect(
     useCallback(() => {
       refreshProfileStats();
-    }, [refreshProfileStats])
+    }, [refreshProfileStats]),
   );
 
   const handleLogout = () => {
@@ -72,12 +67,15 @@ export default function WaiterProfileScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Profile</Text>
-        {/* Manual Refresh Button */}
         <TouchableOpacity onPress={refreshProfileStats} disabled={isRefreshing}>
           {isRefreshing ? (
             <ActivityIndicator size="small" color={WAITER_THEME.primary} />
           ) : (
-            <MaterialIcons name="refresh" size={24} color={WAITER_THEME.textPrimary} />
+            <MaterialIcons
+              name="refresh"
+              size={24}
+              color={WAITER_THEME.textPrimary}
+            />
           )}
         </TouchableOpacity>
       </View>
@@ -86,7 +84,6 @@ export default function WaiterProfileScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Profile Identity Card */}
         <View style={styles.profileCard}>
           <View style={styles.avatarCircle}>
             <Text style={styles.avatarText}>
@@ -108,20 +105,26 @@ export default function WaiterProfileScreen() {
           </View>
         </View>
 
-        {/* --- Performance Stats Section (Tables Served) --- */}
         <Text style={styles.sectionHeader}>Service Performance</Text>
         <View style={styles.statsContainer}>
           <View style={styles.statBox}>
             <Text style={styles.statLabel}>Lifetime Tables Served</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <MaterialIcons name="restaurant" size={24} color={WAITER_THEME.primary} />
-              {/* 🔥 BACKEND SE FETCHED total_served YAHAN SHOW HOGA */}
-              <Text style={styles.statValue}>{waiter?.total_served ?? "0"}</Text> 
+            <View
+              style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+            >
+              <MaterialIcons
+                name="restaurant"
+                size={24}
+                color={WAITER_THEME.primary}
+              />
+              {/* Count will update safely now */}
+              <Text style={styles.statValue}>
+                {waiter?.total_served ?? "0"}
+              </Text>
             </View>
           </View>
         </View>
 
-        {/* Shift Management Section */}
         <Text style={styles.sectionHeader}>Shift Management</Text>
         <View style={styles.controlCard}>
           <View style={styles.controlRow}>
@@ -174,7 +177,6 @@ export default function WaiterProfileScreen() {
           </View>
         </View>
 
-        {/* Connection Diagnostics */}
         <Text style={styles.sectionHeader}>System Diagnostics</Text>
         <View style={styles.controlCard}>
           <View style={styles.diagnosticRow}>
@@ -242,7 +244,6 @@ export default function WaiterProfileScreen() {
           </View>
         </View>
 
-        {/* Logout Action */}
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <MaterialIcons name="logout" size={20} color={WAITER_THEME.danger} />
           <Text style={styles.logoutBtnText}>Log Out</Text>
@@ -333,7 +334,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   statsContainer: {
-    flexDirection: 'row',
+    flexDirection: "row",
     backgroundColor: WAITER_THEME.cardBgLight,
     borderRadius: 16,
     paddingVertical: 24,
@@ -343,20 +344,20 @@ const styles = StyleSheet.create({
   },
   statBox: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     gap: 8,
   },
   statLabel: {
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: "800",
     color: WAITER_THEME.textSecondary,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   statValue: {
     fontSize: 32,
-    fontWeight: '900',
+    fontWeight: "900",
     color: WAITER_THEME.textPrimary,
   },
   controlCard: {
