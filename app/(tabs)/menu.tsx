@@ -153,6 +153,15 @@ export default function MenuScreen() {
           setShowRequestsModal(true);
         }
       });
+      channel.listen(".SessionEnded", async () => {
+        if (!isMounted) return;
+        Alert.alert(
+          "Thank You!",
+          "Your table session has been closed by the restaurant. We hope to see you again soon!",
+        );
+        await clearSession();
+        router.replace("/");
+      });
     };
 
     setupHostListener();

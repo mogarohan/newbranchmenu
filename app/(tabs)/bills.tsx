@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Print from "expo-print";
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router"; // 👈 Added router import
 import * as Sharing from "expo-sharing";
 import React, {
   useCallback,
@@ -36,12 +36,13 @@ export default function BillsTab() {
     setOrders,
     isPrimary,
     customerName,
+    clearSession, // 👈 Destructured clearSession
   } = useSession();
   const { billRequested } = useLocalSearchParams();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false); // 👈 Added downloading state
+  const [isDownloading, setIsDownloading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<
     "connecting" | "live" | "offline"
   >("connecting");
@@ -151,6 +152,16 @@ export default function BillsTab() {
           mergeOrders([event.order]);
           fetchOrders();
         }
+      })
+      // 👇 ADDED SESSION ENDED LISTENER 👇
+      .listen(".SessionEnded", async () => {
+        if (!isMounted) return;
+        Alert.alert(
+          "Thank You!",
+          "Your table session has been closed by the restaurant. We hope to see you again soon!",
+        );
+        await clearSession();
+        router.replace("/");
       });
 
     return () => {
@@ -242,12 +253,12 @@ export default function BillsTab() {
   );
 
   const restaurantName = menuData?.restaurant?.name || "Restaurant Bill";
+  const restaurantLogo = menuData?.restaurant?.logo || null;
   const tableNum = tableData?.tId || "-";
   const displayHostName = isPrimary
     ? customerName
     : menuData?.session?.host_name || "Customer";
 
-  // 🔥 DIRECT PDF DOWNLOAD LOGIC 🔥
   const handleDownloadBill = async () => {
     if (!isBillPaid) {
       Alert.alert(
@@ -281,6 +292,15 @@ export default function BillsTab() {
 
     const receiptHTML = `
       <div style="padding: 30px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #111827; background: #ffffff; max-width: 500px; margin: auto;">
+        
+        ${
+          restaurantLogo
+            ? `<div style="text-align: center; margin-bottom: 12px;">
+                 <img src="${restaurantLogo}" alt="Restaurant Logo" style="max-height: 60px; max-width: 150px; object-fit: contain; border-radius: 8px;" />
+               </div>`
+            : ""
+        }
+
         <div style="text-align: center; font-size: 24px; font-weight: 900; color: #111827; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px;">${restaurantName}</div>
         <div style="text-align: center; font-size: 12px; color: #6b7280; margin-bottom: 30px;">${dateStr}</div>
 
@@ -343,7 +363,6 @@ export default function BillsTab() {
 
     try {
       if (Platform.OS === "web") {
-        // 🔥 FIX FOR WEB: Dynamically load html2pdf.js to force a real PDF download instead of the print dialog
         const generateWebPDF = () => {
           const opt = {
             margin: 0.5,
@@ -371,7 +390,6 @@ export default function BillsTab() {
           generateWebPDF();
         }
       } else {
-        // iOS / Android logic remains unchanged
         const { uri } = await Print.printToFileAsync({ html: receiptHTML });
         await Sharing.shareAsync(uri, {
           UTI: ".pdf",
@@ -428,7 +446,6 @@ export default function BillsTab() {
           </View>
         ) : (
           <View style={{ padding: 16 }}>
-            {/* EXACT MATCH TO MANAGER RECEIPT CARD */}
             <View style={styles.receiptCard}>
               <Text style={styles.receiptTitle}>Table {tableNum}</Text>
               <Text style={styles.receiptSubtitle}>FINAL BILLING SUMMARY</Text>

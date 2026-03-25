@@ -68,7 +68,6 @@ export default function JoinScreen() {
       try {
         const data = await SessionService.validateTable(r, t, token);
 
-        // 👇 NEW: Check if the table is reserved
         if (data.is_reserved) {
           setIsTableReserved(true);
           setValidating(false);
@@ -89,8 +88,13 @@ export default function JoinScreen() {
           setShowJoinChoice(false);
           setSelectedMode("new");
         }
-      } catch (e) {
-        console.error("Validation failed", e);
+      } catch (e: any) {
+        // 👇 FIX: Safely ignore intentional AbortErrors to prevent the red screen!
+        const isAbort =
+          e.name === "AbortError" || e.message?.toLowerCase().includes("abort");
+        if (!isAbort) {
+          console.error("Validation failed", e);
+        }
       } finally {
         setValidating(false);
       }

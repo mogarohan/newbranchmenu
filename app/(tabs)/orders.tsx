@@ -1,11 +1,6 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-import { router } from "expo-router"; 
-import React, {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { router } from "expo-router";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,11 +17,11 @@ import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
 import { initEcho } from "../../services/echo";
 import { OrderService } from "../../services/order.service";
-import { SessionService } from "../../services/session.service";
-import { billTabNotifier } from "./_layout"; 
+import { billTabNotifier } from "./_layout";
 
 export default function OrdersTab() {
-  const { sessionToken, tableData, menuData, orders, setOrders } = useSession();
+  const { sessionToken, tableData, menuData, orders, setOrders, clearSession } =
+    useSession(); // 👈 Added clearSession here
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -38,7 +33,8 @@ export default function OrdersTab() {
   const processedEventsRef = useRef<Set<string>>(new Set());
 
   const currency = menuData?.restaurant?.currency_symbol || "₹";
-  const sessionId = menuData?.session?.id || menuData?.session?.session_id;
+  const sessionId =
+    menuData?.session?.id || menuData?.session?.session_id || tableData?.tId;
 
   const mergeOrders = (incomingOrders: any[]) => {
     setOrders((prev) => {
@@ -49,7 +45,7 @@ export default function OrdersTab() {
           (a, b) =>
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
         )
-        .slice(0, 50);
+        .slice(0, 50); // Keep last 50 orders in memory
     });
   };
 
@@ -58,7 +54,9 @@ export default function OrdersTab() {
       if (!sessionToken) return;
       try {
         const data = await OrderService.getOrders(sessionToken, signal);
-        mergeOrders(Array.isArray(data) ? data : []);
+        // Ensure we handle the array regardless of how Laravel wraps it
+        const incomingOrders = Array.isArray(data) ? data : data.orders || [];
+        mergeOrders(incomingOrders);
       } catch (e: any) {
         if (e.name !== "AbortError") {
           console.error("Failed to fetch orders", e);
@@ -132,6 +130,16 @@ export default function OrdersTab() {
         if (event.order) {
           mergeOrders([event.order]);
         }
+      })
+      // 👇 ADDED SESSION ENDED LISTENER 👇
+      .listen(".SessionEnded", async () => {
+        if (!isMounted) return;
+        Alert.alert(
+          "Thank You!",
+          "Your table session has been closed by the restaurant. We hope to see you again soon!",
+        );
+        await clearSession();
+        router.replace("/");
       });
 
     return () => {
@@ -156,79 +164,198 @@ export default function OrdersTab() {
       if (Platform.OS === "web") {
         window.alert("A staff member has been alerted and is on the way.");
       } else {
-        Alert.alert("Waiter Notified", "A staff member has been alerted and is on the way.");
+        Alert.alert(
+          "Waiter Notified",
+          "A staff member has been alerted and is on the way.",
+        );
       }
     } catch (e) {
-      if (Platform.OS === "web") window.alert("Could not reach staff. Please try again.");
+      if (Platform.OS === "web")
+        window.alert("Could not reach staff. Please try again.");
       else Alert.alert("Error", "Could not reach staff. Please try again.");
     }
   };
 
   const getStatusUI = (status: string) => {
     const s = status?.toLowerCase() || "";
-    if (s === "accepted") return { color: THEME.primary, bg: THEME.primary, text: "Order Accepted", icon: "checkmark-circle-outline" };
-    if (s === "placed" || s === "pending") return { color: THEME.textSecondary, bg: "#94A3B8", text: "Placed", icon: "time-outline" };
-    if (s === "preparing") return { color: THEME.warning, bg: THEME.warning, text: "Preparing", icon: "flame-outline" };
-    if (s === "ready") return { color: THEME.primary, bg: THEME.primary, text: "Ready to Serve", icon: "restaurant-outline" };
-    if (s === "served" || s === "completed") return { color: THEME.success, bg: THEME.success, text: "Served", icon: "checkmark-circle-outline" };
-    return { color: THEME.danger, bg: THEME.danger, text: "Cancelled", icon: "close-circle-outline" };
+    if (s === "accepted")
+      return {
+        color: THEME.primary,
+        bg: THEME.primary,
+        text: "Order Accepted",
+        icon: "checkmark-circle-outline",
+      };
+    if (s === "placed" || s === "pending")
+      return {
+        color: THEME.textSecondary,
+        bg: "#94A3B8",
+        text: "Placed",
+        icon: "time-outline",
+      };
+    if (s === "preparing")
+      return {
+        color: THEME.warning,
+        bg: THEME.warning,
+        text: "Preparing",
+        icon: "flame-outline",
+      };
+    if (s === "ready")
+      return {
+        color: THEME.primary,
+        bg: THEME.primary,
+        text: "Ready to Serve",
+        icon: "restaurant-outline",
+      };
+    if (s === "served" || s === "completed")
+      return {
+        color: THEME.success,
+        bg: THEME.success,
+        text: "Served",
+        icon: "checkmark-circle-outline",
+      };
+    if (s === "cancelled" || s === "rejected")
+      return {
+        color: THEME.danger,
+        bg: THEME.danger,
+        text: "Cancelled",
+        icon: "close-circle-outline",
+      };
+    return {
+      color: THEME.textSecondary,
+      bg: "#94A3B8",
+      text: "Unknown",
+      icon: "help-circle-outline",
+    };
   };
 
   const renderOrderItem = ({ item: order }: { item: any }) => {
     const statusUI = getStatusUI(order.status);
-    const isCancelled = order.status?.toLowerCase() === "cancelled" || order.status?.toLowerCase() === "rejected";
+    const isCancelled =
+      order.status?.toLowerCase() === "cancelled" ||
+      order.status?.toLowerCase() === "rejected";
+
+    // 👇 FIX: If cancelled, do not show the order amount to avoid confusing the user
+    const displayTotal = isCancelled
+      ? 0
+      : parseFloat(String(order.total_amount)) || 0;
 
     return (
-      <View style={[styles.orderCard, isCancelled && { opacity: 0.6 }]}>
+      <View
+        style={[
+          styles.orderCard,
+          isCancelled && { opacity: 0.5, borderColor: THEME.danger },
+        ]}
+      >
         <View style={styles.orderHeader}>
           <View>
-            <Text style={[styles.orderId, isCancelled && { textDecorationLine: "line-through", color: THEME.textSecondary }]}>
+            <Text
+              style={[
+                styles.orderId,
+                isCancelled && {
+                  textDecorationLine: "line-through",
+                  color: THEME.textSecondary,
+                },
+              ]}
+            >
               Order #{order.id}
             </Text>
-            <Text style={styles.orderTime}>Placed by {order.customer_name || "Guest"}</Text>
+            <Text style={styles.orderTime}>
+              Placed by {order.customer_name || "Guest"}
+            </Text>
           </View>
-          <View style={[styles.statusBadge, { backgroundColor: statusUI.bg + "15" }]}>
-            <Ionicons name={statusUI.icon as any} size={14} color={statusUI.color} style={{ marginRight: 4 }} />
-            <Text style={[styles.statusText, { color: statusUI.color }]}>{statusUI.text}</Text>
+          <View
+            style={[
+              styles.statusBadge,
+              { backgroundColor: statusUI.bg + "15" },
+            ]}
+          >
+            <Ionicons
+              name={statusUI.icon as any}
+              size={14}
+              color={statusUI.color}
+              style={{ marginRight: 4 }}
+            />
+            <Text style={[styles.statusText, { color: statusUI.color }]}>
+              {statusUI.text}
+            </Text>
           </View>
         </View>
 
         <View style={styles.itemsList}>
           {Array.isArray(order.items) &&
             order.items.map((item: any, i: number) => {
-              // Safe Math Calculation
-              const unitPrice = parseFloat(String(item.unit_price || item.price || 0)) || 0;
+              const unitPrice =
+                parseFloat(String(item.unit_price || item.price || 0)) || 0;
               const qty = parseInt(String(item.quantity || 1), 10) || 1;
-              const totalPrice = parseFloat(String(item.total_price || (unitPrice * qty))) || 0;
+              const totalPrice =
+                parseFloat(String(item.total_price || unitPrice * qty)) || 0;
 
               return (
                 <View key={`item-${item.id || i}`} style={styles.orderItem}>
-                  <View style={{ flexDirection: "row", flex: 1, paddingRight: 12 }}>
-                    <Text style={styles.itemQtyBadge}>{qty}x</Text>
+                  <View
+                    style={{ flexDirection: "row", flex: 1, paddingRight: 12 }}
+                  >
+                    <Text
+                      style={[
+                        styles.itemQtyBadge,
+                        isCancelled && { color: THEME.textSecondary },
+                      ]}
+                    >
+                      {qty}x
+                    </Text>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.itemText} numberOfLines={2}>
+                      <Text
+                        style={[
+                          styles.itemText,
+                          isCancelled && {
+                            textDecorationLine: "line-through",
+                            color: THEME.textSecondary,
+                          },
+                        ]}
+                        numberOfLines={2}
+                      >
                         {item.menu_item?.name || item.item_name || "Menu Item"}
                       </Text>
-                      {item.notes && <Text style={styles.itemNote}>Note: {item.notes}</Text>}
+                      {item.notes && (
+                        <Text style={styles.itemNote}>Note: {item.notes}</Text>
+                      )}
                     </View>
                   </View>
-                  <Text style={styles.itemPrice}>{currency}{totalPrice.toFixed(2)}</Text>
+                  <Text
+                    style={[
+                      styles.itemPrice,
+                      isCancelled && {
+                        textDecorationLine: "line-through",
+                        color: THEME.textSecondary,
+                      },
+                    ]}
+                  >
+                    {currency}
+                    {totalPrice.toFixed(2)}
+                  </Text>
                 </View>
               );
             })}
         </View>
 
-        {order.notes && (
+        {order.notes && !isCancelled && (
           <View style={styles.orderLevelNote}>
-            <Ionicons name="chatbox-ellipses-outline" size={14} color="#B45309" />
+            <Ionicons
+              name="chatbox-ellipses-outline"
+              size={14}
+              color="#B45309"
+            />
             <Text style={styles.orderLevelNoteText}>{order.notes}</Text>
           </View>
         )}
 
         <View style={styles.orderFooter}>
           <Text style={styles.totalText}>Order Total</Text>
-          <Text style={[styles.totalText, isCancelled && { textDecorationLine: "line-through", color: THEME.textSecondary }]}>
-            {currency}{(parseFloat(String(order.total_amount)) || 0).toFixed(2)}
+          <Text
+            style={[styles.totalText, isCancelled && { color: THEME.danger }]}
+          >
+            {currency}
+            {displayTotal.toFixed(2)}
           </Text>
         </View>
       </View>
@@ -240,11 +367,39 @@ export default function OrdersTab() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Order History</Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <View style={[styles.statusIndicator, connectionStatus === "live" ? styles.bgSuccess : connectionStatus === "connecting" ? styles.bgWarning : styles.bgDanger]}>
-            <View style={[styles.statusDot, connectionStatus === "live" ? styles.dotSuccess : connectionStatus === "connecting" ? styles.dotWarning : styles.dotDanger]} />
-            <Text style={styles.statusIndicatorText}>{connectionStatus === "live" ? "Live" : connectionStatus === "connecting" ? "Connecting..." : "Offline"}</Text>
+          <View
+            style={[
+              styles.statusIndicator,
+              connectionStatus === "live"
+                ? styles.bgSuccess
+                : connectionStatus === "connecting"
+                  ? styles.bgWarning
+                  : styles.bgDanger,
+            ]}
+          >
+            <View
+              style={[
+                styles.statusDot,
+                connectionStatus === "live"
+                  ? styles.dotSuccess
+                  : connectionStatus === "connecting"
+                    ? styles.dotWarning
+                    : styles.dotDanger,
+              ]}
+            />
+            <Text style={styles.statusIndicatorText}>
+              {connectionStatus === "live"
+                ? "Live"
+                : connectionStatus === "connecting"
+                  ? "Connecting..."
+                  : "Offline"}
+            </Text>
           </View>
-          <TouchableOpacity style={styles.refreshBtn} onPress={onRefresh} disabled={refreshing || loading}>
+          <TouchableOpacity
+            style={styles.refreshBtn}
+            onPress={onRefresh}
+            disabled={refreshing || loading}
+          >
             <Ionicons name="reload" size={18} color={THEME.textPrimary} />
           </TouchableOpacity>
         </View>
@@ -257,11 +412,34 @@ export default function OrdersTab() {
         </View>
       ) : displayOrders.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="receipt-outline" size={64} color={THEME.textSecondary} style={{ opacity: 0.3 }} />
+          <Ionicons
+            name="receipt-outline"
+            size={64}
+            color={THEME.textSecondary}
+            style={{ opacity: 0.3 }}
+          />
           <Text style={styles.emptyStateTitle}>No orders found.</Text>
-          <Text style={styles.emptyStateText}>When you place orders, they will appear here.</Text>
-          <TouchableOpacity style={styles.webSafeRefreshBtn} onPress={onRefresh} disabled={refreshing}>
-            {refreshing ? <ActivityIndicator size="small" color={THEME.primary} /> : <><Ionicons name="reload" size={16} color={THEME.primary} style={{ marginRight: 6 }} /><Text style={styles.webSafeRefreshText}>Tap to Refresh</Text></>}
+          <Text style={styles.emptyStateText}>
+            When you place orders, they will appear here.
+          </Text>
+          <TouchableOpacity
+            style={styles.webSafeRefreshBtn}
+            onPress={onRefresh}
+            disabled={refreshing}
+          >
+            {refreshing ? (
+              <ActivityIndicator size="small" color={THEME.primary} />
+            ) : (
+              <>
+                <Ionicons
+                  name="reload"
+                  size={16}
+                  color={THEME.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.webSafeRefreshText}>Tap to Refresh</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       ) : (
@@ -275,16 +453,24 @@ export default function OrdersTab() {
           maxToRenderPerBatch={10}
           windowSize={5}
           removeClippedSubviews={Platform.OS !== "ios"}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={THEME.primary} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={THEME.primary}
+            />
+          }
           ListFooterComponent={() => (
             <View style={styles.askBillContainer}>
-              <TouchableOpacity 
-                style={styles.askBillBtn} 
+              <TouchableOpacity
+                style={styles.askBillBtn}
                 onPress={() => {
-                  billTabNotifier.show(); 
-                  // 🔥 FIX: 100ms Delay before navigating to prevent blank screen crash
+                  billTabNotifier.show();
                   setTimeout(() => {
-                    router.push({ pathname: "/(tabs)/bills", params: { billRequested: "true" }}); 
+                    router.push({
+                      pathname: "/(tabs)/bills",
+                      params: { billRequested: "true" },
+                    });
                   }, 100);
                 }}
               >
@@ -303,10 +489,32 @@ export default function OrdersTab() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: THEME.background, maxWidth: 480, width: "100%", alignSelf: "center" },
-  header: { flexDirection: "row", justifyContent: "space-between", paddingTop: Platform.OS === "android" ? 40 : 16, paddingBottom: 16, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: THEME.border, alignItems: "center", backgroundColor: THEME.cardBg },
+  container: {
+    flex: 1,
+    backgroundColor: THEME.background,
+    maxWidth: 480,
+    width: "100%",
+    alignSelf: "center",
+  },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingTop: Platform.OS === "android" ? 40 : 16,
+    paddingBottom: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.border,
+    alignItems: "center",
+    backgroundColor: THEME.cardBg,
+  },
   headerTitle: { fontSize: 20, fontWeight: "bold", color: THEME.textPrimary },
-  statusIndicator: { flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+  statusIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
   bgSuccess: { backgroundColor: "rgba(16, 185, 129, 0.1)" },
   bgWarning: { backgroundColor: "rgba(245, 158, 11, 0.1)" },
   bgDanger: { backgroundColor: "rgba(239, 68, 68, 0.1)" },
@@ -314,32 +522,176 @@ const styles = StyleSheet.create({
   dotSuccess: { backgroundColor: THEME.success },
   dotWarning: { backgroundColor: THEME.warning },
   dotDanger: { backgroundColor: THEME.danger },
-  statusIndicatorText: { fontSize: 11, fontWeight: "bold", color: THEME.textSecondary },
-  refreshBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: THEME.background, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: THEME.border, ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)) },
+  statusIndicatorText: {
+    fontSize: 11,
+    fontWeight: "bold",
+    color: THEME.textSecondary,
+  },
+  refreshBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: THEME.background,
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: THEME.border,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)),
+  },
   scrollContent: { padding: 16, paddingBottom: 100 },
-  orderCard: { backgroundColor: THEME.cardBg, padding: 16, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: THEME.border, ...Platform.select({ web: { boxShadow: "0px 2px 8px rgba(0,0,0,0.04)" } as any, default: { shadowColor: THEME.textPrimary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 2 } }) },
-  orderHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: THEME.border },
+  orderCard: {
+    backgroundColor: THEME.cardBg,
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    ...Platform.select({
+      web: { boxShadow: "0px 2px 8px rgba(0,0,0,0.04)" } as any,
+      default: {
+        shadowColor: THEME.textPrimary,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+      },
+    }),
+  },
+  orderHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: THEME.border,
+  },
   orderId: { fontSize: 16, fontWeight: "bold", color: THEME.textPrimary },
   orderTime: { fontSize: 13, color: THEME.textSecondary, marginTop: 2 },
-  statusBadge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 20 },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
   statusText: { fontSize: 12, fontWeight: "bold" },
   itemsList: { gap: 12 },
-  orderItem: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  itemQtyBadge: { color: THEME.primary, fontWeight: "bold", fontSize: 14, marginRight: 8, width: 24 },
+  orderItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  itemQtyBadge: {
+    color: THEME.primary,
+    fontWeight: "bold",
+    fontSize: 14,
+    marginRight: 8,
+    width: 24,
+  },
   itemText: { fontSize: 15, fontWeight: "500", color: THEME.textPrimary },
   itemPrice: { fontSize: 15, color: THEME.textPrimary, fontWeight: "600" },
-  itemNote: { fontSize: 13, color: THEME.textSecondary, fontStyle: "italic", marginTop: 4 },
-  orderLevelNote: { flexDirection: "row", alignItems: "center", backgroundColor: "#FFFBEB", padding: 12, marginTop: 16, borderRadius: 8, borderWidth: 1, borderColor: "#FEF3C7" },
-  orderLevelNoteText: { fontSize: 13, color: "#B45309", marginLeft: 8, flex: 1 },
-  orderFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: THEME.border },
+  itemNote: {
+    fontSize: 13,
+    color: THEME.textSecondary,
+    fontStyle: "italic",
+    marginTop: 4,
+  },
+  orderLevelNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFBEB",
+    padding: 12,
+    marginTop: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FEF3C7",
+  },
+  orderLevelNoteText: {
+    fontSize: 13,
+    color: "#B45309",
+    marginLeft: 8,
+    flex: 1,
+  },
+  orderFooter: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: THEME.border,
+  },
   totalText: { fontSize: 16, fontWeight: "bold", color: THEME.textPrimary },
-  emptyState: { flex: 1, justifyContent: "center", alignItems: "center", padding: 40, marginTop: 60 },
-  emptyStateTitle: { fontSize: 18, fontWeight: "bold", color: THEME.textPrimary, marginTop: 16, marginBottom: 8 },
-  emptyStateText: { fontSize: 14, color: THEME.textSecondary, textAlign: "center", marginTop: 8 },
-  webSafeRefreshBtn: { flexDirection: "row", alignItems: "center", backgroundColor: THEME.primaryLight, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, marginTop: 24, ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)) },
-  webSafeRefreshText: { color: THEME.primary, fontWeight: "bold", fontSize: 14 },
-  fab: { position: "absolute", bottom: 24, right: 16, width: 56, height: 56, borderRadius: 28, backgroundColor: THEME.primary, justifyContent: "center", alignItems: "center", ...Platform.select({ default: { shadowColor: THEME.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 } }) },
+  emptyState: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 40,
+    marginTop: 60,
+  },
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: THEME.textPrimary,
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: THEME.textSecondary,
+    textAlign: "center",
+    marginTop: 8,
+  },
+  webSafeRefreshBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: THEME.primaryLight,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginTop: 24,
+    ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)),
+  },
+  webSafeRefreshText: {
+    color: THEME.primary,
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  fab: {
+    position: "absolute",
+    bottom: 24,
+    right: 16,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: THEME.primary,
+    justifyContent: "center",
+    alignItems: "center",
+    ...Platform.select({
+      default: {
+        shadowColor: THEME.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 5,
+      },
+    }),
+  },
   askBillContainer: { marginTop: 10, marginBottom: 40 },
-  askBillBtn: { backgroundColor: THEME.primary, flexDirection: "row", justifyContent: "center", alignItems: "center", padding: 16, borderRadius: 12, gap: 10, shadowColor: THEME.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
-  askBillBtnText: { color: "#fff", fontSize: 18, fontWeight: "bold" }
+  askBillBtn: {
+    backgroundColor: THEME.primary,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+    borderRadius: 12,
+    gap: 10,
+    shadowColor: THEME.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  askBillBtnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
 });

@@ -1,4 +1,4 @@
-import { apiCall, authHeaders } from "./api"; // 🔥 FIX: Import authHeaders
+import { apiCall } from "./api"; // 🔥 FIX: Import authHeaders
 
 export const SessionService = {
   validateTable: async (rId: string, tId: string, token: string) => {
@@ -68,7 +68,8 @@ export const SessionService = {
   callWaiter: async (sessionToken: string) => {
     return apiCall(`/session/call-waiter`, {
       method: "POST",
-      headers: authHeaders(sessionToken), // Sends the Bearer token as Laravel expects
+      // 👇 FIX: Send token in the body instead of relying on headers
+      body: JSON.stringify({ session_token: sessionToken }),
     });
   },
 };

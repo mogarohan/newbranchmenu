@@ -31,6 +31,13 @@ export async function apiCall(
   }
 
   const controller = new AbortController();
+
+  if (options.signal) {
+    options.signal.addEventListener("abort", () => {
+      controller.abort();
+    });
+  }
+
   const timeout = setTimeout(() => controller.abort(), 15000);
 
   try {
@@ -61,9 +68,20 @@ export async function apiCall(
     }
     return data;
   } catch (error: any) {
+    clearTimeout(timeout);
+
+    const errorMessage = error?.message || String(error);
+    const isAbort =
+      error?.name === "AbortError" ||
+      errorMessage.toLowerCase().includes("abort");
+
+    if (isAbort) {
+      // 👇 FIX: Re-throw so the component stops executing, but DO NOT log it as a server error.
+      throw error;
+    }
+
     if (
       retries > 0 &&
-      error.name !== "AbortError" &&
       error.status !== 401 &&
       error.status !== 403 &&
       error.status !== 0
@@ -73,7 +91,8 @@ export async function apiCall(
       await new Promise((r) => setTimeout(r, delay));
       return apiCall(endpoint, options, retries - 1);
     }
-    logEvent("ERROR", "API_FAILED", { endpoint, error: error.message });
+
+    logEvent("ERROR", "API_FAILED", { endpoint, error: errorMessage });
     throw error;
   }
 }
