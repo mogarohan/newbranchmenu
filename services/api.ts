@@ -1,5 +1,6 @@
 import NetInfo from "@react-native-community/netinfo";
 import Constants from "expo-constants";
+import { Platform } from "react-native";
 import { logEvent } from "../utils/logger";
 
 const API_URL =
@@ -7,11 +8,27 @@ const API_URL =
 if (!API_URL) throw new Error("Missing API_URL environment variable");
 
 let cachedOnline = true;
-NetInfo.addEventListener((state) => {
-  cachedOnline = !!state.isConnected && !!state.isInternetReachable;
-});
+
+// Only use the asynchronous NetInfo listener for Native Apps.
+// Web browsers handle this much faster natively.
+if (Platform.OS !== "web") {
+  NetInfo.addEventListener((state) => {
+    cachedOnline = !!state.isConnected && !!state.isInternetReachable;
+  });
+}
+
+// Create a synchronous helper function to check network status
+function isDeviceOnline() {
+  if (Platform.OS === "web") {
+    // On the web, use the browser's instant, synchronous navigator API
+    return typeof navigator !== "undefined" ? navigator.onLine : true;
+  }
+  // On mobile, rely on the cached NetInfo state
+  return cachedOnline;
+}
 
 export class ApiError extends Error {
+  // ... rest of the code remains exactly the same
   status: number;
   data: any;
   constructor(message: string, status: number, data: any) {

@@ -27,7 +27,7 @@ const DUMMY_MENU = [
     price: 22.5,
     desc: "Wagyu beef, truffle aioli, caramelized onions, Gruyère cheese, brioche bun.",
     is_popular: true,
-    is_veg: false,
+    type: "non-veg",
     image_path:
       "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=300&auto=format&fit=crop",
   },
@@ -37,17 +37,17 @@ const DUMMY_MENU = [
     price: 18.9,
     desc: "Handmade linguine, house-made basil pesto, toasted pine nuts, parmesan.",
     is_popular: false,
-    is_veg: true,
+    type: "veg",
     image_path:
       "https://images.unsplash.com/photo-1473093295043-cdd812d0e601?q=80&w=300&auto=format&fit=crop",
   },
 ];
 
 const FALLBACK_CATEGORIES = [
-  { id: 1, name: "Mains", items: DUMMY_MENU },
-  { id: 2, name: "Appetizers", items: [] },
-  { id: 3, name: "Drinks", items: [] },
-  { id: 4, name: "Desserts", items: [] },
+  { id: 1, name: "Mains", items: DUMMY_MENU, is_active: true },
+  { id: 2, name: "Appetizers", items: [], is_active: true },
+  { id: 3, name: "Drinks", items: [], is_active: true },
+  { id: 4, name: "Desserts", items: [], is_active: true },
 ];
 
 export default function MenuScreen() {
@@ -70,6 +70,9 @@ export default function MenuScreen() {
     "all",
   );
   const [searchQuery, setSearchQuery] = useState("");
+  const [dietaryFilter, setDietaryFilter] = useState<"all" | "veg" | "non-veg">(
+    "all",
+  );
   const [loadingMenu, setLoadingMenu] = useState(true);
 
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
@@ -78,7 +81,6 @@ export default function MenuScreen() {
   const echoRef = useRef<any>(null);
   const processedEventsRef = useRef<Set<string>>(new Set());
 
-  // 👇 FIX: Safely extract sessionId with a guaranteed fallback to tableData.tId
   const currentSessionId =
     menuData?.session?.id ||
     menuData?.session?.session_id ||
@@ -168,7 +170,6 @@ export default function MenuScreen() {
 
     return () => {
       isMounted = false;
-      // 👇 FIX: Use the guaranteed currentSessionId to safely unbind during unmount
       if (echoRef.current && currentSessionId) {
         if (echoRef.current.connector?.pusher?.connection) {
           echoRef.current.connector.pusher.connection.unbind_all();
@@ -183,18 +184,14 @@ export default function MenuScreen() {
     action: "approve" | "reject",
   ) => {
     if (!sessionToken) return;
-
     const guestToMove = pendingRequests.find((r) => r.id === id);
-
     try {
       await SessionService.respondToRequest(id, action, sessionToken);
-
       setPendingRequests((prev) => {
         const updated = prev.filter((r) => r.id !== id);
         if (updated.length === 0) setShowRequestsModal(false);
         return updated;
       });
-
       if (action === "approve" && guestToMove) {
         setActiveGuests((prev) => [...prev, guestToMove]);
       }
@@ -211,7 +208,6 @@ export default function MenuScreen() {
       if (confirmed) clearSession().then(() => router.replace("/"));
       return;
     }
-
     Alert.alert(
       "Leave Table?",
       "Are you sure you want to disconnect from this table? Your cart and session will be cleared.",
@@ -231,7 +227,6 @@ export default function MenuScreen() {
 
   const handleCallWaiter = () => {
     if (!sessionToken) return;
-
     Alert.alert("Call Waiter", "Do you need a waiter at your table?", [
       { text: "Cancel", style: "cancel" },
       {
@@ -249,12 +244,51 @@ export default function MenuScreen() {
   };
 
   const categories = menuData?.categories || FALLBACK_CATEGORIES;
-  const currentCatIndex = categories.findIndex(
+
+  // 👇 FIX: Process all categories with Safe Fallbacks for 'type'
+  const processedCategories = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+
+    return categories
+      .map((cat: any) => {
+        if (cat.is_active === false || cat.is_active === 0) return null;
+
+        const filteredItems = (cat.items || []).filter((item: any) => {
+          if (item.is_available === false || item.is_available === 0)
+            return false;
+
+          // 👇 SAFE DIETARY CHECK: Default to 'veg' if the API hasn't sent the type yet
+          const safeType = item.type
+            ? String(item.type).toLowerCase()
+            : item.is_veg
+              ? "veg"
+              : "veg";
+
+          if (dietaryFilter !== "all" && safeType !== dietaryFilter)
+            return false;
+
+          if (query) {
+            const matchName = item.name?.toLowerCase().includes(query);
+            const matchDesc =
+              item.description?.toLowerCase().includes(query) ||
+              item.desc?.toLowerCase().includes(query);
+            if (!matchName && !matchDesc) return false;
+          }
+
+          return true;
+        });
+
+        return { ...cat, items: filteredItems };
+      })
+      .filter((cat: any) => cat && cat.items.length > 0);
+  }, [categories, searchQuery, dietaryFilter]);
+
+  const currentCatIndex = processedCategories.findIndex(
     (c: any) => c.id === activeCategoryId,
   );
   const nextCategory =
-    currentCatIndex !== -1 && currentCatIndex < categories.length - 1
-      ? categories[currentCatIndex + 1]
+    currentCatIndex !== -1 && currentCatIndex < processedCategories.length - 1
+      ? processedCategories[currentCatIndex + 1]
       : null;
 
   const isApproved = joinStatus === "active" || joinStatus === "approved";
@@ -266,24 +300,6 @@ export default function MenuScreen() {
   const displayHostName = isPrimary
     ? customerName
     : menuData?.session?.host_name || "Host";
-
-  const filteredSearchResults = useMemo(() => {
-    if (!searchQuery.trim()) return [];
-    const query = searchQuery.toLowerCase().trim();
-
-    return categories
-      .map((cat: any) => {
-        const filteredItems = cat.items.filter(
-          (item: any) =>
-            item.name.toLowerCase().includes(query) ||
-            (item.description &&
-              item.description.toLowerCase().includes(query)) ||
-            (item.desc && item.desc.toLowerCase().includes(query)),
-        );
-        return { ...cat, items: filteredItems };
-      })
-      .filter((cat: any) => cat.items.length > 0);
-  }, [categories, searchQuery]);
 
   const renderMenuItem = (item: any) => {
     const currentQty = cart[item.id]?.qty || 0;
@@ -315,17 +331,46 @@ export default function MenuScreen() {
           </View>
 
           <View style={styles.cardFooter}>
-            <View style={{ flexDirection: "row", gap: 6 }}>
+            <View
+              style={{
+                flexDirection: "row",
+                gap: 6,
+                flexWrap: "wrap",
+                flex: 1,
+                alignItems: "center",
+              }}
+            >
               {item.is_popular && (
                 <View style={styles.badgePopular}>
                   <Text style={styles.badgePopularText}>POPULAR</Text>
                 </View>
               )}
-              {item.is_veg && (
-                <View style={styles.badgeVeg}>
-                  <Text style={styles.badgeVegText}>VEG</Text>
-                </View>
-              )}
+
+              {/* 👇 FIX: Safe Veg/Non-Veg Display Logic 👇 */}
+              {(() => {
+                const safeType = item.type
+                  ? String(item.type).toLowerCase()
+                  : item.is_veg
+                    ? "veg"
+                    : "veg";
+
+                if (safeType === "veg") {
+                  return (
+                    <View style={styles.badgeVeg}>
+                      <View style={styles.vegDot} />
+                      <Text style={styles.badgeVegText}>VEG</Text>
+                    </View>
+                  );
+                } else if (safeType === "non-veg") {
+                  return (
+                    <View style={styles.badgeNonVeg}>
+                      <View style={styles.nonVegTriangle} />
+                      <Text style={styles.badgeNonVegText}>NON-VEG</Text>
+                    </View>
+                  );
+                }
+                return null;
+              })()}
             </View>
 
             {!isOrderingLocked &&
@@ -513,33 +558,95 @@ export default function MenuScreen() {
             )}
           </View>
 
+          <View style={styles.dietaryFilterContainer}>
+            <TouchableOpacity
+              style={[
+                styles.dietFilterBtn,
+                dietaryFilter === "all" && styles.dietFilterBtnActive,
+              ]}
+              onPress={() => setDietaryFilter("all")}
+            >
+              <Text
+                style={[
+                  styles.dietFilterText,
+                  dietaryFilter === "all" && styles.dietFilterTextActive,
+                ]}
+              >
+                All Items
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.dietFilterBtn,
+                dietaryFilter === "veg" && styles.dietFilterBtnActiveVeg,
+              ]}
+              onPress={() => setDietaryFilter("veg")}
+            >
+              <View style={styles.vegDot} />
+              <Text
+                style={[
+                  styles.dietFilterText,
+                  dietaryFilter === "veg" && styles.dietFilterTextActiveVeg,
+                ]}
+              >
+                Veg Only
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.dietFilterBtn,
+                dietaryFilter === "non-veg" && styles.dietFilterBtnActiveNonVeg,
+              ]}
+              onPress={() => setDietaryFilter("non-veg")}
+            >
+              <View style={styles.nonVegTriangle} />
+              <Text
+                style={[
+                  styles.dietFilterText,
+                  dietaryFilter === "non-veg" &&
+                    styles.dietFilterTextActiveNonVeg,
+                ]}
+              >
+                Non-Veg
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.menuSection}>
-            {searchQuery.trim().length > 0 ? (
+            {searchQuery.trim().length > 0 || dietaryFilter !== "all" ? (
               <View>
-                <Text style={styles.categoryTitle}>Search Results</Text>
-                {filteredSearchResults.map((cat: any) => (
-                  <View key={`search-cat-${cat.id}`}>
-                    <Text
-                      style={[
-                        styles.categoryTitle,
-                        {
-                          fontSize: 16,
-                          color: THEME.textSecondary,
-                          marginTop: 12,
-                        },
-                      ]}
-                    >
-                      In {cat.name}
-                    </Text>
-                    {cat.items.map((item: any) => renderMenuItem(item))}
-                  </View>
-                ))}
+                <Text style={styles.categoryTitle}>Filtered Results</Text>
+                {processedCategories.length === 0 ? (
+                  <Text style={styles.emptySearchText}>
+                    No items match your criteria.
+                  </Text>
+                ) : (
+                  processedCategories.map((cat: any) => (
+                    <View key={`search-cat-${cat.id}`}>
+                      <Text
+                        style={[
+                          styles.categoryTitle,
+                          {
+                            fontSize: 16,
+                            color: THEME.textSecondary,
+                            marginTop: 12,
+                          },
+                        ]}
+                      >
+                        In {cat.name}
+                      </Text>
+                      {cat.items.map((item: any) => renderMenuItem(item))}
+                    </View>
+                  ))
+                )}
               </View>
             ) : activeCategoryId === "all" ? (
               <View>
                 <Text style={styles.categoryTitle}>Menu Categories</Text>
                 <View style={styles.categoryGrid}>
-                  {categories.map((cat: any) => (
+                  {processedCategories.map((cat: any) => (
                     <TouchableOpacity
                       key={cat.id}
                       style={styles.categoryBlock}
@@ -574,7 +681,7 @@ export default function MenuScreen() {
                   <Text style={styles.backBtnText}>Back to Categories</Text>
                 </TouchableOpacity>
 
-                {categories
+                {processedCategories
                   .filter((c: any) => c.id === activeCategoryId)
                   .map((cat: any) => (
                     <View key={`items-${cat.id}`}>
@@ -703,7 +810,6 @@ export default function MenuScreen() {
                   </View>
                 ))
               )}
-
               <View
                 style={{
                   flexDirection: "row",
@@ -864,7 +970,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#FFF",
     marginHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 12,
     paddingHorizontal: 12,
     borderRadius: 12,
     height: 44,
@@ -877,6 +983,42 @@ const styles = StyleSheet.create({
     color: THEME.textPrimary,
     fontSize: 15,
   },
+  dietaryFilterContainer: {
+    flexDirection: "row",
+    marginHorizontal: 16,
+    marginBottom: 16,
+    gap: 8,
+  },
+  dietFilterBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    backgroundColor: "#FFF",
+  },
+  dietFilterBtnActive: {
+    backgroundColor: THEME.textPrimary,
+    borderColor: THEME.textPrimary,
+  },
+  dietFilterBtnActiveVeg: {
+    backgroundColor: "#ecfdf5",
+    borderColor: "#10b981",
+  },
+  dietFilterBtnActiveNonVeg: {
+    backgroundColor: "#fef2f2",
+    borderColor: "#ef4444",
+  },
+  dietFilterText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: THEME.textSecondary,
+  },
+  dietFilterTextActive: { color: "#FFF" },
+  dietFilterTextActiveVeg: { color: "#047857" },
+  dietFilterTextActiveNonVeg: { color: "#b91c1c" },
   categoryTitle: {
     fontSize: 22,
     fontWeight: "bold",
@@ -920,6 +1062,7 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     marginTop: 8,
     fontSize: 15,
+    marginBottom: 20,
   },
   nextCategoryBtn: {
     flexDirection: "row",
@@ -999,15 +1142,46 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   badgeVeg: {
-    backgroundColor: THEME.successLight,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ecfdf5",
     paddingHorizontal: 6,
     paddingVertical: 4,
     borderRadius: 6,
+    gap: 4,
   },
+  vegDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#10b981" },
   badgeVegText: {
     fontSize: 9,
     fontWeight: "bold",
-    color: THEME.success,
+    color: "#047857",
+    letterSpacing: 0.5,
+  },
+  badgeNonVeg: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fef2f2",
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
+  },
+  nonVegTriangle: {
+    width: 0,
+    height: 0,
+    backgroundColor: "transparent",
+    borderStyle: "solid",
+    borderLeftWidth: 3,
+    borderRightWidth: 3,
+    borderBottomWidth: 6,
+    borderLeftColor: "transparent",
+    borderRightColor: "transparent",
+    borderBottomColor: "#ef4444",
+  },
+  badgeNonVegText: {
+    fontSize: 9,
+    fontWeight: "bold",
+    color: "#b91c1c",
     letterSpacing: 0.5,
   },
   addBtn: {

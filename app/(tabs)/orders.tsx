@@ -21,7 +21,7 @@ import { billTabNotifier } from "./_layout";
 
 export default function OrdersTab() {
   const { sessionToken, tableData, menuData, orders, setOrders, clearSession } =
-    useSession(); // 👈 Added clearSession here
+    useSession();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -39,13 +39,28 @@ export default function OrdersTab() {
   const mergeOrders = (incomingOrders: any[]) => {
     setOrders((prev) => {
       const map = new Map(prev.map((o) => [o.id, o]));
-      incomingOrders.forEach((o) => map.set(o.id, o));
+
+      incomingOrders.forEach((incoming) => {
+        const existing = map.get(incoming.id);
+
+        if (existing) {
+          // 👇 SMART MERGE: Keep existing items on the screen if incoming payload doesn't have them!
+          map.set(incoming.id, {
+            ...existing,
+            ...incoming,
+            items: incoming.items || existing.items,
+          });
+        } else {
+          map.set(incoming.id, incoming);
+        }
+      });
+
       return Array.from(map.values())
         .sort(
           (a, b) =>
             new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
         )
-        .slice(0, 50); // Keep last 50 orders in memory
+        .slice(0, 50);
     });
   };
 
@@ -54,7 +69,6 @@ export default function OrdersTab() {
       if (!sessionToken) return;
       try {
         const data = await OrderService.getOrders(sessionToken, signal);
-        // Ensure we handle the array regardless of how Laravel wraps it
         const incomingOrders = Array.isArray(data) ? data : data.orders || [];
         mergeOrders(incomingOrders);
       } catch (e: any) {
@@ -129,9 +143,10 @@ export default function OrdersTab() {
         }
         if (event.order) {
           mergeOrders([event.order]);
+          // 👇 Trigger a silent background fetch to grab the full items array
+          fetchOrders();
         }
       })
-      // 👇 ADDED SESSION ENDED LISTENER 👇
       .listen(".SessionEnded", async () => {
         if (!isMounted) return;
         Alert.alert(
@@ -153,7 +168,7 @@ export default function OrdersTab() {
         echoRef.current = null;
       }
     };
-  }, [sessionToken, sessionId]);
+  }, [sessionToken, sessionId, fetchOrders]);
 
   const displayOrders = Array.isArray(orders) ? orders : [];
 
@@ -234,7 +249,6 @@ export default function OrdersTab() {
       order.status?.toLowerCase() === "cancelled" ||
       order.status?.toLowerCase() === "rejected";
 
-    // 👇 FIX: If cancelled, do not show the order amount to avoid confusing the user
     const displayTotal = isCancelled
       ? 0
       : parseFloat(String(order.total_amount)) || 0;

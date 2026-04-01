@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as Print from "expo-print";
-import { router, useLocalSearchParams } from "expo-router"; // 👈 Added router import
+import { router, useLocalSearchParams } from "expo-router";
 import * as Sharing from "expo-sharing";
 import React, {
   useCallback,
@@ -36,7 +36,7 @@ export default function BillsTab() {
     setOrders,
     isPrimary,
     customerName,
-    clearSession, // 👈 Destructured clearSession
+    clearSession,
   } = useSession();
   const { billRequested } = useLocalSearchParams();
 
@@ -58,7 +58,22 @@ export default function BillsTab() {
   const mergeOrders = (incomingOrders: any[]) => {
     setOrders((prev) => {
       const map = new Map(prev.map((o) => [o.id, o]));
-      incomingOrders.forEach((o) => map.set(o.id, o));
+
+      incomingOrders.forEach((incoming) => {
+        const existing = map.get(incoming.id);
+
+        if (existing) {
+          // 👇 SMART MERGE: Keep existing items on the screen if incoming payload doesn't have them!
+          map.set(incoming.id, {
+            ...existing,
+            ...incoming,
+            items: incoming.items || existing.items,
+          });
+        } else {
+          map.set(incoming.id, incoming);
+        }
+      });
+
       return Array.from(map.values()).sort(
         (a, b) =>
           new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
@@ -150,10 +165,10 @@ export default function BillsTab() {
         }
         if (event.order) {
           mergeOrders([event.order]);
+          // 👇 Trigger a silent background fetch to grab the full items array
           fetchOrders();
         }
       })
-      // 👇 ADDED SESSION ENDED LISTENER 👇
       .listen(".SessionEnded", async () => {
         if (!isMounted) return;
         Alert.alert(

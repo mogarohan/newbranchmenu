@@ -57,5 +57,8 @@ export default {
       BASE_URL: process.env.EXPO_PUBLIC_BASE_URL,
       API_URL: process.env.EXPO_PUBLIC_API_URL,
     },
+    eas: {
+      projectId: "277ed9b9-4bd0-43f9-bc6b-dc3b127111e5",
+    },
   },
 };
