@@ -55,10 +55,15 @@ export default function JoinScreen() {
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(true);
   const [isTableFull, setIsTableFull] = useState(false);
-  const [isTableReserved, setIsTableReserved] = useState(false); // 👇 NEW: Track reservation state
+  const [isTableReserved, setIsTableReserved] = useState(false);
   const [existingHostName, setExistingHostName] = useState<string | null>(null);
   const [showJoinChoice, setShowJoinChoice] = useState(false);
   const [selectedMode, setSelectedMode] = useState<"new" | "join">("new");
+
+  // 👇 NEW: State to hold the actual table name (e.g., T-01) from Laravel
+  const [tableDisplayNumber, setTableDisplayNumber] = useState<string | null>(
+    null,
+  );
 
   const initTable = useCallback(async () => {
     if (r && t && token) {
@@ -67,6 +72,11 @@ export default function JoinScreen() {
       }
       try {
         const data = await SessionService.validateTable(r, t, token);
+
+        // 👇 FIX: Save the real table name from the API response
+        if (data.table_number) {
+          setTableDisplayNumber(data.table_number);
+        }
 
         if (data.is_reserved) {
           setIsTableReserved(true);
@@ -89,7 +99,6 @@ export default function JoinScreen() {
           setSelectedMode("new");
         }
       } catch (e: any) {
-        // 👇 FIX: Safely ignore intentional AbortErrors to prevent the red screen!
         const isAbort =
           e.name === "AbortError" || e.message?.toLowerCase().includes("abort");
         if (!isAbort) {
@@ -210,7 +219,6 @@ export default function JoinScreen() {
         e?.data?.message === "TABLE_RESERVED" ||
         e?.message?.includes("TABLE_RESERVED")
       ) {
-        // Redundancy check in case they bypass validation
         setIsTableReserved(true);
       } else {
         console.error(e);
@@ -229,7 +237,6 @@ export default function JoinScreen() {
     );
   }
 
-  // Prevent UI flash for logged-in waiters
   if (waiterToken) {
     return (
       <View style={styles.centerContainer}>
@@ -309,7 +316,6 @@ export default function JoinScreen() {
     );
   }
 
-  // 👇 NEW: UI FOR RESERVED TABLE 👇
   if (isTableReserved) {
     return (
       <View style={styles.centerContainer}>
@@ -415,6 +421,8 @@ export default function JoinScreen() {
 
       <View style={styles.content}>
         <Text style={styles.welcomeTitle}>Welcome!</Text>
+
+        {/* 👇 FIX: Conditionally render the real Table name or fallback to ID 👇 */}
         <View style={styles.tableBadge}>
           <MaterialIcons
             name="local-activity"
@@ -422,7 +430,9 @@ export default function JoinScreen() {
             color={THEME.primary}
           />
           <Text style={styles.tableBadgeText}>
-            Table #{tableData?.tId || "?"}
+            {tableDisplayNumber
+              ? `Table ${tableDisplayNumber}`
+              : `Table #${tableData?.tId || "?"}`}
           </Text>
         </View>
 

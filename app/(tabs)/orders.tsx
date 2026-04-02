@@ -247,7 +247,13 @@ export default function OrdersTab() {
     };
   };
 
-  const renderOrderItem = ({ item: order }: { item: any }) => {
+  const renderOrderItem = ({
+    item: order,
+    index,
+  }: {
+    item: any;
+    index: number;
+  }) => {
     const statusUI = getStatusUI(order.status);
     const isCancelled =
       order.status?.toLowerCase() === "cancelled" ||
@@ -256,6 +262,10 @@ export default function OrdersTab() {
     const displayTotal = isCancelled
       ? 0
       : parseFloat(String(order.total_amount)) || 0;
+
+    // 👇 FIX: Calculate sequential display number (Oldest is #1)
+    // Since displayOrders is sorted newest first, we subtract the index from the total length.
+    const displayOrderNumber = displayOrders.length - index;
 
     return (
       <View
@@ -275,7 +285,8 @@ export default function OrdersTab() {
                 },
               ]}
             >
-              Order #{order.id}
+              {/* 👇 Output the calculated display number instead of order.id 👇 */}
+              Order #{displayOrderNumber}
             </Text>
             <Text style={styles.orderTime}>
               Placed by {order.customer_name || "Guest"}

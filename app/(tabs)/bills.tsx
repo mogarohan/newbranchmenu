@@ -167,7 +167,6 @@ export default function BillsTab() {
         }
         if (event.order) {
           mergeOrders([event.order]);
-          // 👇 Trigger a silent background fetch to grab the full items array
           fetchOrders();
         }
       })
@@ -271,7 +270,10 @@ export default function BillsTab() {
 
   const restaurantName = menuData?.restaurant?.name || "Restaurant Bill";
   const restaurantLogo = menuData?.restaurant?.logo || null;
-  const tableNum = tableData?.tId || "-";
+
+  // 👇 THE FIX: Pull the real table number from menuData!
+  const tableNum = menuData?.table?.number || tableData?.tId || "-";
+
   const displayHostName = isPrimary
     ? customerName
     : menuData?.session?.host_name || "Customer";
