@@ -63,11 +63,13 @@ export default function BillsTab() {
         const existing = map.get(incoming.id);
 
         if (existing) {
-          // 👇 SMART MERGE: Keep existing items on the screen if incoming payload doesn't have them!
           map.set(incoming.id, {
             ...existing,
             ...incoming,
-            items: incoming.items || existing.items,
+            items:
+              incoming.items && incoming.items.length > 0
+                ? incoming.items
+                : existing.items,
           });
         } else {
           map.set(incoming.id, incoming);

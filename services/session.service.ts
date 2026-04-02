@@ -72,4 +72,10 @@ export const SessionService = {
       body: JSON.stringify({ session_token: sessionToken }),
     });
   },
+  requestBill: async (sessionToken: string) => {
+    return apiCall(`/session/request-bill`, {
+      method: "POST",
+      body: JSON.stringify({ session_token: sessionToken }),
+    });
+  },
 };

@@ -17,6 +17,7 @@ import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
 import { initEcho } from "../../services/echo";
 import { OrderService } from "../../services/order.service";
+import { SessionService } from "../../services/session.service";
 import { billTabNotifier } from "./_layout";
 
 export default function OrdersTab() {
@@ -44,11 +45,14 @@ export default function OrdersTab() {
         const existing = map.get(incoming.id);
 
         if (existing) {
-          // 👇 SMART MERGE: Keep existing items on the screen if incoming payload doesn't have them!
           map.set(incoming.id, {
             ...existing,
             ...incoming,
-            items: incoming.items || existing.items,
+            // Strictly preserve the existing items if the incoming payload is a lightweight socket update
+            items:
+              incoming.items && incoming.items.length > 0
+                ? incoming.items
+                : existing.items,
           });
         } else {
           map.set(incoming.id, incoming);
@@ -478,7 +482,13 @@ export default function OrdersTab() {
             <View style={styles.askBillContainer}>
               <TouchableOpacity
                 style={styles.askBillBtn}
-                onPress={() => {
+                onPress={async () => {
+                  if (sessionToken) {
+                    try {
+                      // Silently notify the manager in the background
+                      await SessionService.requestBill(sessionToken);
+                    } catch (e) {}
+                  }
                   billTabNotifier.show();
                   setTimeout(() => {
                     router.push({
