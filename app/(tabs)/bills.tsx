@@ -12,6 +12,7 @@ import React, {
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   RefreshControl,
   SafeAreaView,
@@ -21,11 +22,13 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import QRCode from "react-native-qrcode-svg";
 
 import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
 import { initEcho } from "../../services/echo";
 import { OrderService } from "../../services/order.service";
+import { SessionService } from "../../services/session.service";
 
 export default function BillsTab() {
   const {
@@ -58,10 +61,8 @@ export default function BillsTab() {
   const mergeOrders = (incomingOrders: any[]) => {
     setOrders((prev) => {
       const map = new Map(prev.map((o) => [o.id, o]));
-
       incomingOrders.forEach((incoming) => {
         const existing = map.get(incoming.id);
-
         if (existing) {
           map.set(incoming.id, {
             ...existing,
@@ -75,7 +76,6 @@ export default function BillsTab() {
           map.set(incoming.id, incoming);
         }
       });
-
       return Array.from(map.values()).sort(
         (a, b) =>
           new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
@@ -90,17 +90,9 @@ export default function BillsTab() {
         const data = await OrderService.getOrders(sessionToken, signal);
         const incomingOrders = Array.isArray(data) ? data : data.orders || [];
         mergeOrders(incomingOrders);
-
-        if (data.payment) {
-          setPaymentData(data.payment);
-        }
+        if (data.payment) setPaymentData(data.payment);
       } catch (e: any) {
-        if (e.name !== "AbortError") {
-          console.error("Failed to fetch orders", e);
-          if (e.status === 403 || e.status === 404) {
-            console.log("Session closed or table cleared. Handled silently.");
-          }
-        }
+        if (e.name !== "AbortError") console.error("Failed to fetch orders", e);
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -131,9 +123,7 @@ export default function BillsTab() {
     }
 
     let isMounted = true;
-    if (!echoRef.current) {
-      echoRef.current = initEcho(sessionToken);
-    }
+    if (!echoRef.current) echoRef.current = initEcho(sessionToken);
     const echoInstance = echoRef.current;
 
     echoInstance.connector.pusher.connection.bind(
@@ -145,9 +135,8 @@ export default function BillsTab() {
           setConnectionStatus("connecting");
         else if (
           ["disconnected", "unavailable", "failed"].includes(states.current)
-        ) {
+        )
           setConnectionStatus("offline");
-        }
       },
     );
 
@@ -160,21 +149,21 @@ export default function BillsTab() {
       .private(`session.${sessionId}`)
       .listen(".OrderStatusUpdated", (event: any) => {
         if (!isMounted) return;
-        const eventId = event.event_id;
-        if (eventId) {
-          if (processedEventsRef.current.has(eventId)) return;
-          processedEventsRef.current.add(eventId);
-        }
         if (event.order) {
           mergeOrders([event.order]);
           fetchOrders();
         }
       })
+      .listen(".BillGenerated", (event: any) => {
+        if (!isMounted) return;
+        setPaymentData(event.paymentData);
+        fetchOrders();
+      })
       .listen(".SessionEnded", async () => {
         if (!isMounted) return;
         Alert.alert(
           "Thank You!",
-          "Your table session has been closed by the restaurant. We hope to see you again soon!",
+          "Your table session has been closed. See you again!",
         );
         await clearSession();
         router.replace("/");
@@ -203,9 +192,8 @@ export default function BillsTab() {
       : [];
   }, [orders]);
 
-  const isBillPaid =
-    validOrders.length > 0 &&
-    validOrders.every((o) => o.status?.toLowerCase() === "completed");
+  const isBillPaid = paymentData?.status === "paid";
+  const isBillPending = paymentData?.status === "pending";
 
   useEffect(() => {
     if (isBillPaid && echoRef.current && sessionId) {
@@ -219,11 +207,20 @@ export default function BillsTab() {
     }
   }, [isBillPaid, sessionId]);
 
+  const handleSelectMethod = async (method: "cash" | "upi" | "pending") => {
+    if (!sessionToken) return;
+    try {
+      await SessionService.selectPaymentMethod(sessionToken, method);
+      setPaymentData((prev: any) => ({ ...prev, payment_method: method }));
+    } catch (e) {
+      Alert.alert("Error", "Could not select payment method.");
+    }
+  };
+
   const { consolidatedItems, rawSubtotal, totalItemsCount } = useMemo(() => {
     const itemMap = new Map();
     let total = 0;
     let qtyCount = 0;
-
     validOrders.forEach((order) => {
       if (Array.isArray(order.items)) {
         order.items.forEach((item) => {
@@ -236,7 +233,6 @@ export default function BillsTab() {
 
           total += itemPrice * itemQty;
           qtyCount += itemQty;
-
           if (itemMap.has(key)) {
             const existing = itemMap.get(key);
             existing.quantity += itemQty;
@@ -253,7 +249,6 @@ export default function BillsTab() {
         });
       }
     });
-
     return {
       consolidatedItems: Array.from(itemMap.values()),
       rawSubtotal: total || 0,
@@ -270,23 +265,34 @@ export default function BillsTab() {
 
   const restaurantName = menuData?.restaurant?.name || "Restaurant Bill";
   const restaurantLogo = menuData?.restaurant?.logo || null;
-
-  // 👇 THE FIX: Pull the real table number from menuData!
   const tableNum = menuData?.table?.number || tableData?.tId || "-";
-
   const displayHostName = isPrimary
     ? customerName
     : menuData?.session?.host_name || "Customer";
 
-  const handleDownloadBill = async () => {
-    if (!isBillPaid) {
-      Alert.alert(
-        "Notice",
-        "The bill cannot be downloaded until payment is completed at the counter.",
-      );
-      return;
-    }
+  // 👇 PRODUCTION-GRADE UPI STRING GENERATION 👇
+  const upiId = paymentData?.upi_id || menuData?.restaurant?.upi_id || "";
 
+  // 1. Strictly encode all dynamic parameters
+  const pa = encodeURIComponent(upiId);
+  const pn = encodeURIComponent(restaurantName);
+  const tn = encodeURIComponent(`Bill for Table ${tableNum}`);
+
+  // 2. Pull the backend-generated Transaction ID and MC Code
+  const tr = encodeURIComponent(
+    paymentData?.transaction_reference || `TXN${Date.now()}`,
+  );
+  const mc = encodeURIComponent(paymentData?.merchant_category_code || "5812");
+
+  // 3. Format amount strictly to 2 decimal places
+  const am = finalGrandTotal.toFixed(2);
+  const cu = "INR";
+
+  // 4. Assemble the deep link
+  const upiString = `upi://pay?pa=${pa}&pn=${pn}&tr=${tr}&tn=${tn}&mc=${mc}&am=${am}&cu=${cu}`;
+
+  const handleDownloadBill = async () => {
+    if (!isBillPaid) return;
     setIsDownloading(true);
 
     const dateStr = new Date().toLocaleString();
@@ -445,26 +451,28 @@ export default function BillsTab() {
           />
         }
       >
-        {loading && consolidatedItems.length === 0 ? (
+        {loading && !paymentData ? (
           <View style={styles.emptyState}>
             <ActivityIndicator size="large" color={THEME.primary} />
             <Text style={styles.emptyStateText}>Loading bill...</Text>
           </View>
-        ) : consolidatedItems.length === 0 ? (
+        ) : !paymentData ? (
           <View style={styles.emptyState}>
             <Ionicons
-              name="receipt-outline"
+              name="hourglass-outline"
               size={64}
               color={THEME.textSecondary}
               style={{ opacity: 0.3 }}
             />
-            <Text style={styles.emptyStateTitle}>No items billed yet.</Text>
+            <Text style={styles.emptyStateTitle}>Bill Not Generated Yet</Text>
             <Text style={styles.emptyStateText}>
-              Your ordered items will appear here.
+              Please wait while the manager generates your final bill with
+              applicable taxes and discounts.
             </Text>
           </View>
         ) : (
           <View style={{ padding: 16 }}>
+            {/* BILL SUMMARY CARD */}
             <View style={styles.receiptCard}>
               <Text style={styles.receiptTitle}>Table {tableNum}</Text>
               <Text style={styles.receiptSubtitle}>FINAL BILLING SUMMARY</Text>
@@ -498,27 +506,12 @@ export default function BillsTab() {
 
               <View style={styles.summarySection}>
                 <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>
-                    Total Orders Delivered:
-                  </Text>
-                  <Text style={styles.summaryValue}>{totalItemsCount}</Text>
-                </View>
-
-                <View style={[styles.summaryRow, { marginTop: 12 }]}>
-                  <Text
-                    style={[
-                      styles.summaryLabel,
-                      { fontWeight: "700", color: "#111827" },
-                    ]}
-                  >
-                    Subtotal:
-                  </Text>
+                  <Text style={styles.summaryLabel}>Subtotal:</Text>
                   <Text style={styles.summaryValue}>
                     {currency}
                     {finalSubtotal.toFixed(2)}
                   </Text>
                 </View>
-
                 {finalDiscount > 0 && (
                   <View style={styles.summaryRow}>
                     <Text
@@ -534,7 +527,6 @@ export default function BillsTab() {
                     </Text>
                   </View>
                 )}
-
                 {finalTax > 0 && (
                   <View style={styles.summaryRow}>
                     <Text
@@ -550,7 +542,6 @@ export default function BillsTab() {
                     </Text>
                   </View>
                 )}
-
                 <View style={styles.grandTotalRow}>
                   <Text style={styles.grandTotalLabel}>GRAND TOTAL</Text>
                   <Text style={styles.grandTotalValue}>
@@ -561,6 +552,7 @@ export default function BillsTab() {
               </View>
             </View>
 
+            {/* DYNAMIC PAYMENT UI */}
             {isBillPaid ? (
               <TouchableOpacity
                 style={styles.downloadBigBtn}
@@ -582,11 +574,81 @@ export default function BillsTab() {
                   </>
                 )}
               </TouchableOpacity>
+            ) : isBillPending && paymentData.payment_method === "pending" ? (
+              <View>
+                <Text style={styles.methodHeader}>Select Payment Method</Text>
+                <View style={{ flexDirection: "row", gap: 12 }}>
+                  <TouchableOpacity
+                    style={styles.methodBtn}
+                    onPress={() => handleSelectMethod("cash")}
+                  >
+                    <Ionicons
+                      name="cash-outline"
+                      size={24}
+                      color={THEME.primary}
+                    />
+                    <Text style={styles.methodBtnText}>Pay with Cash</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.methodBtn}
+                    onPress={() => handleSelectMethod("upi")}
+                  >
+                    <Ionicons
+                      name="qr-code-outline"
+                      size={24}
+                      color={THEME.primary}
+                    />
+                    <Text style={styles.methodBtnText}>Pay with UPI</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : isBillPending && paymentData.payment_method === "upi" ? (
+              <View style={styles.upiContainer}>
+                <Text style={styles.upiHeader}>Scan to Pay</Text>
+                <View style={styles.qrWrapper}>
+                  {upiId ? (
+                    <QRCode value={upiString} size={180} />
+                  ) : (
+                    <Text>UPI ID not configured</Text>
+                  )}
+                </View>
+                <Text style={styles.upiSubText}>ID: {upiId}</Text>
+                <TouchableOpacity
+                  style={styles.upiLinkBtn}
+                  onPress={() => Linking.openURL(upiString)}
+                >
+                  <Text style={styles.upiLinkBtnText}>Open UPI App</Text>
+                </TouchableOpacity>
+                <Text style={styles.waitingText}>
+                  Waiting for manager to confirm payment...
+                </Text>
+
+                {/* 👇 NEW: Change Method Button 👇 */}
+                <TouchableOpacity
+                  style={styles.changeMethodBtn}
+                  onPress={() => handleSelectMethod("pending")}
+                >
+                  <Text style={styles.changeMethodText}>
+                    Change Payment Method
+                  </Text>
+                </TouchableOpacity>
+              </View>
             ) : (
               <View style={styles.unpaidWarning}>
                 <Text style={styles.unpaidText}>
-                  Please pay at the counter to download your final receipt.
+                  Please pay cash at the counter. Waiting for manager
+                  confirmation...
                 </Text>
+
+                {/* 👇 NEW: Change Method Button 👇 */}
+                <TouchableOpacity
+                  style={styles.changeMethodBtn}
+                  onPress={() => handleSelectMethod("pending")}
+                >
+                  <Text style={styles.changeMethodText}>
+                    Change Payment Method
+                  </Text>
+                </TouchableOpacity>
               </View>
             )}
           </View>
@@ -646,7 +708,6 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     textAlign: "center",
   },
-
   receiptCard: {
     backgroundColor: "#fff",
     borderRadius: 12,
@@ -724,7 +785,6 @@ const styles = StyleSheet.create({
   },
   grandTotalLabel: { fontSize: 20, fontWeight: "900", color: "#111827" },
   grandTotalValue: { fontSize: 20, fontWeight: "900", color: "#111827" },
-
   downloadBigBtn: {
     width: "100%",
     flexDirection: "row",
@@ -750,4 +810,67 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   unpaidText: { color: "#d97706", textAlign: "center", fontWeight: "600" },
+  methodHeader: {
+    fontSize: 16,
+    fontWeight: "bold",
+    textAlign: "center",
+    marginBottom: 12,
+    color: THEME.textPrimary,
+  },
+  methodBtn: {
+    flex: 1,
+    backgroundColor: THEME.cardBg,
+    borderWidth: 2,
+    borderColor: THEME.primary,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  methodBtnText: { color: THEME.primary, fontWeight: "bold", marginTop: 8 },
+  upiContainer: {
+    alignItems: "center",
+    backgroundColor: THEME.cardBg,
+    padding: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: THEME.border,
+  },
+  upiHeader: { fontSize: 18, fontWeight: "bold", marginBottom: 16 },
+  qrWrapper: {
+    padding: 12,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    elevation: 2,
+  },
+  upiSubText: { marginTop: 12, color: THEME.textSecondary, fontWeight: "bold" },
+  upiLinkBtn: {
+    marginTop: 16,
+    backgroundColor: THEME.primary,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 24,
+  },
+  upiLinkBtnText: { color: "#fff", fontWeight: "bold" },
+  waitingText: {
+    marginTop: 16,
+    color: THEME.warning,
+    fontWeight: "bold",
+    fontStyle: "italic",
+    textAlign: "center",
+  },
+  changeMethodBtn: {
+    marginTop: 24,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    alignSelf: "center",
+  },
+  changeMethodText: {
+    color: THEME.textSecondary,
+    fontWeight: "bold",
+    fontSize: 12,
+    textAlign: "center",
+  },
 });

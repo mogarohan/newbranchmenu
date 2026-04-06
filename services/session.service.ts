@@ -78,4 +78,15 @@ export const SessionService = {
       body: JSON.stringify({ session_token: sessionToken }),
     });
   },
+  // Add this inside SessionService
+  // 👇 Update the signature to accept "pending"
+  selectPaymentMethod: async (
+    sessionToken: string,
+    method: "cash" | "upi" | "pending",
+  ) => {
+    return apiCall(`/session/select-payment-method`, {
+      method: "POST",
+      body: JSON.stringify({ session_token: sessionToken, method }),
+    });
+  },
 };
