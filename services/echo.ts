@@ -12,10 +12,7 @@ export function initEcho(token: string) {
     broadcaster: "pusher",
     key: process.env.EXPO_PUBLIC_PUSHER_APP_KEY,
     cluster: process.env.EXPO_PUBLIC_PUSHER_APP_CLUSTER,
-    wsHost: process.env.EXPO_PUBLIC_PUSHER_HOST || "ws-ap2.pusher.com",
-    wsPort: 80,
-    wssPort: 443,
-    enabledTransports: ["ws", "wss"],
+    // 👇 FIX: Remove wsHost, wsPort, and wssPort entirely. Let Pusher handle it.
     forceTLS: true,
     authEndpoint: `${BASE_URL}/api/pusher/auth`,
     activityTimeout: 30000,
