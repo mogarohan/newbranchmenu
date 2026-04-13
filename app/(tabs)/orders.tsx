@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Platform,
   RefreshControl,
   SafeAreaView,
@@ -19,6 +20,19 @@ import { initEcho } from "../../services/echo";
 import { OrderService } from "../../services/order.service";
 import { SessionService } from "../../services/session.service";
 import { billTabNotifier } from "./_layout";
+
+// ─── Ann Sathi Brand Colors ───────────────────────────────────────────────────
+const ANN = {
+  orange: "#fe9a54",
+  red: "#f16b3f",
+  blue: "#456aba",
+  darkBlue: "#2a4795",
+  orangeLight: "#fff4ec",
+  redLight: "#fff0eb",
+  blueLight: "#eef2fb",
+  darkBlueLight: "#e8ecf7",
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function OrdersTab() {
   const { sessionToken, tableData, menuData, orders, setOrders, clearSession } =
@@ -195,57 +209,23 @@ export default function OrdersTab() {
     }
   };
 
-  const getStatusUI = (status: string) => {
+  // ─── NEW: LOGIC FOR VISUAL TRACKER ───
+  const getStepIndex = (status: string) => {
     const s = status?.toLowerCase() || "";
-    if (s === "accepted")
-      return {
-        color: THEME.primary,
-        bg: THEME.primary,
-        text: "Order Accepted",
-        icon: "checkmark-circle-outline",
-      };
-    if (s === "placed" || s === "pending")
-      return {
-        color: THEME.textSecondary,
-        bg: "#94A3B8",
-        text: "Placed",
-        icon: "time-outline",
-      };
-    if (s === "preparing")
-      return {
-        color: THEME.warning,
-        bg: THEME.warning,
-        text: "Preparing",
-        icon: "flame-outline",
-      };
-    if (s === "ready")
-      return {
-        color: THEME.primary,
-        bg: THEME.primary,
-        text: "Ready to Serve",
-        icon: "restaurant-outline",
-      };
-    if (s === "served" || s === "completed")
-      return {
-        color: THEME.success,
-        bg: THEME.success,
-        text: "Served",
-        icon: "checkmark-circle-outline",
-      };
-    if (s === "cancelled" || s === "rejected")
-      return {
-        color: THEME.danger,
-        bg: THEME.danger,
-        text: "Cancelled",
-        icon: "close-circle-outline",
-      };
-    return {
-      color: THEME.textSecondary,
-      bg: "#94A3B8",
-      text: "Unknown",
-      icon: "help-circle-outline",
-    };
+    if (s === "cancelled" || s === "rejected") return -1;
+    if (s === "served" || s === "completed") return 4;
+    if (s === "ready") return 3;
+    if (s === "preparing") return 2;
+    // placed, pending, accepted
+    return 1;
   };
+
+  const STEPS = [
+    { id: 1, label: "Placed", icon: "check" },
+    { id: 2, label: "Preparing", icon: "restaurant" },
+    { id: 3, label: "Ready", icon: "notifications" },
+    { id: 4, label: "Served", icon: "room-service" },
+  ];
 
   const renderOrderItem = ({
     item: order,
@@ -254,7 +234,6 @@ export default function OrdersTab() {
     item: any;
     index: number;
   }) => {
-    const statusUI = getStatusUI(order.status);
     const isCancelled =
       order.status?.toLowerCase() === "cancelled" ||
       order.status?.toLowerCase() === "rejected";
@@ -263,15 +242,14 @@ export default function OrdersTab() {
       ? 0
       : parseFloat(String(order.total_amount)) || 0;
 
-    // 👇 FIX: Calculate sequential display number (Oldest is #1)
-    // Since displayOrders is sorted newest first, we subtract the index from the total length.
     const displayOrderNumber = displayOrders.length - index;
+    const currentStep = getStepIndex(order.status);
 
     return (
       <View
         style={[
           styles.orderCard,
-          isCancelled && { opacity: 0.5, borderColor: THEME.danger },
+          isCancelled && { opacity: 0.6, borderColor: THEME.danger },
         ]}
       >
         <View style={styles.orderHeader}>
@@ -285,31 +263,75 @@ export default function OrdersTab() {
                 },
               ]}
             >
-              {/* 👇 Output the calculated display number instead of order.id 👇 */}
               Order #{displayOrderNumber}
             </Text>
             <Text style={styles.orderTime}>
               Placed by {order.customer_name || "Guest"}
             </Text>
           </View>
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: statusUI.bg + "15" },
-            ]}
-          >
-            <Ionicons
-              name={statusUI.icon as any}
-              size={14}
-              color={statusUI.color}
-              style={{ marginRight: 4 }}
-            />
-            <Text style={[styles.statusText, { color: statusUI.color }]}>
-              {statusUI.text}
-            </Text>
-          </View>
+          {isCancelled && (
+            <View style={styles.cancelledBadge}>
+              <Text style={styles.cancelledText}>CANCELLED</Text>
+            </View>
+          )}
         </View>
 
+        {/* ─── VISUAL STATUS TRACKER ─── */}
+        {!isCancelled && (
+          <View style={styles.trackerContainer}>
+            {/* Background Line */}
+            <View style={styles.trackerLineBg} />
+            {/* Active Progress Line */}
+            <View
+              style={[
+                styles.trackerLineActive,
+                { width: `${((Math.max(1, currentStep) - 1) / 3) * 100}%` },
+              ]}
+            />
+
+            {STEPS.map((step) => {
+              const isCompleted = currentStep > step.id;
+              const isCurrent = currentStep === step.id;
+              const isPending = currentStep < step.id;
+
+              return (
+                <View key={`step-${step.id}`} style={styles.stepWrapper}>
+                  {/* Outer Glow for Current Step */}
+                  <View
+                    style={[
+                      styles.stepIconContainer,
+                      isCurrent && styles.stepIconContainerActiveGlow,
+                      isCompleted && styles.stepIconContainerCompleted,
+                      isPending && styles.stepIconContainerPending,
+                    ]}
+                  >
+                    <MaterialIcons
+                      name={step.icon as any}
+                      size={18}
+                      color={
+                        isCurrent || isCompleted
+                          ? "#FFFFFF"
+                          : THEME.textSecondary
+                      }
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.stepLabel,
+                      isCurrent && styles.stepLabelCurrent,
+                      isCompleted && styles.stepLabelCompleted,
+                      isPending && styles.stepLabelPending,
+                    ]}
+                  >
+                    {step.label}
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* ─── ITEMS LIST ─── */}
         <View style={styles.itemsList}>
           {Array.isArray(order.items) &&
             order.items.map((item: any, i: number) => {
@@ -372,7 +394,7 @@ export default function OrdersTab() {
             <Ionicons
               name="chatbox-ellipses-outline"
               size={14}
-              color="#B45309"
+              color={ANN.darkBlue}
             />
             <Text style={styles.orderLevelNoteText}>{order.notes}</Text>
           </View>
@@ -381,7 +403,10 @@ export default function OrdersTab() {
         <View style={styles.orderFooter}>
           <Text style={styles.totalText}>Order Total</Text>
           <Text
-            style={[styles.totalText, isCancelled && { color: THEME.danger }]}
+            style={[
+              styles.totalPriceLarge,
+              isCancelled && { color: THEME.danger },
+            ]}
           >
             {currency}
             {displayTotal.toFixed(2)}
@@ -392,141 +417,165 @@ export default function OrdersTab() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Order History</Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
-          <View
-            style={[
-              styles.statusIndicator,
-              connectionStatus === "live"
-                ? styles.bgSuccess
-                : connectionStatus === "connecting"
-                  ? styles.bgWarning
-                  : styles.bgDanger,
-            ]}
-          >
+    // ─── MAIN WRAPPER FOR GLASS BACKGROUND EFFECT ───
+    <View style={styles.mainWrapper}>
+      <Image
+        source={require("../../assets/images/bg.png")}
+        style={styles.bgImage}
+      />
+      <View style={styles.bgOverlay} />
+
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Order History</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
             <View
               style={[
-                styles.statusDot,
+                styles.statusIndicator,
                 connectionStatus === "live"
-                  ? styles.dotSuccess
+                  ? styles.bgSuccess
                   : connectionStatus === "connecting"
-                    ? styles.dotWarning
-                    : styles.dotDanger,
+                    ? styles.bgWarning
+                    : styles.bgDanger,
               ]}
-            />
-            <Text style={styles.statusIndicatorText}>
-              {connectionStatus === "live"
-                ? "Live"
-                : connectionStatus === "connecting"
-                  ? "Connecting..."
-                  : "Offline"}
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={styles.refreshBtn}
-            onPress={onRefresh}
-            disabled={refreshing || loading}
-          >
-            <Ionicons name="reload" size={18} color={THEME.textPrimary} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {loading && displayOrders.length === 0 ? (
-        <View style={styles.emptyState}>
-          <ActivityIndicator size="large" color={THEME.primary} />
-          <Text style={styles.emptyStateText}>Loading orders...</Text>
-        </View>
-      ) : displayOrders.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons
-            name="receipt-outline"
-            size={64}
-            color={THEME.textSecondary}
-            style={{ opacity: 0.3 }}
-          />
-          <Text style={styles.emptyStateTitle}>No orders found.</Text>
-          <Text style={styles.emptyStateText}>
-            When you place orders, they will appear here.
-          </Text>
-          <TouchableOpacity
-            style={styles.webSafeRefreshBtn}
-            onPress={onRefresh}
-            disabled={refreshing}
-          >
-            {refreshing ? (
-              <ActivityIndicator size="small" color={THEME.primary} />
-            ) : (
-              <>
-                <Ionicons
-                  name="reload"
-                  size={16}
-                  color={THEME.primary}
-                  style={{ marginRight: 6 }}
-                />
-                <Text style={styles.webSafeRefreshText}>Tap to Refresh</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <FlatList
-          data={displayOrders}
-          keyExtractor={(item) => `order-${item.id}`}
-          renderItem={renderOrderItem}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          initialNumToRender={10}
-          maxToRenderPerBatch={10}
-          windowSize={5}
-          removeClippedSubviews={Platform.OS !== "ios"}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              tintColor={THEME.primary}
-            />
-          }
-          ListFooterComponent={() => (
-            <View style={styles.askBillContainer}>
-              <TouchableOpacity
-                style={styles.askBillBtn}
-                onPress={async () => {
-                  if (sessionToken) {
-                    try {
-                      // Silently notify the manager in the background
-                      await SessionService.requestBill(sessionToken);
-                    } catch (e) {}
-                  }
-                  billTabNotifier.show();
-                  setTimeout(() => {
-                    router.push({
-                      pathname: "/(tabs)/bills",
-                      params: { billRequested: "true" },
-                    });
-                  }, 100);
-                }}
-              >
-                <MaterialIcons name="receipt-long" size={24} color="#fff" />
-                <Text style={styles.askBillBtnText}>Ask for Bill</Text>
-              </TouchableOpacity>
+            >
+              <View
+                style={[
+                  styles.statusDot,
+                  connectionStatus === "live"
+                    ? styles.dotSuccess
+                    : connectionStatus === "connecting"
+                      ? styles.dotWarning
+                      : styles.dotDanger,
+                ]}
+              />
+              <Text style={styles.statusIndicatorText}>
+                {connectionStatus === "live"
+                  ? "Live"
+                  : connectionStatus === "connecting"
+                    ? "Connecting..."
+                    : "Offline"}
+              </Text>
             </View>
-          )}
-        />
-      )}
-      <TouchableOpacity style={styles.fab} onPress={handleCallWaiter}>
-        <Ionicons name="notifications-outline" size={24} color={THEME.cardBg} />
-      </TouchableOpacity>
-    </SafeAreaView>
+            <TouchableOpacity
+              style={styles.refreshBtn}
+              onPress={onRefresh}
+              disabled={refreshing || loading}
+            >
+              <Ionicons name="reload" size={18} color={ANN.darkBlue} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {loading && displayOrders.length === 0 ? (
+          <View style={styles.emptyState}>
+            <ActivityIndicator size="large" color={ANN.red} />
+            <Text style={styles.emptyStateText}>Loading orders...</Text>
+          </View>
+        ) : displayOrders.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons
+              name="receipt-outline"
+              size={64}
+              color={THEME.textSecondary}
+              style={{ opacity: 0.3 }}
+            />
+            <Text style={styles.emptyStateTitle}>No orders found.</Text>
+            <Text style={styles.emptyStateText}>
+              When you place orders, they will appear here.
+            </Text>
+            <TouchableOpacity
+              style={styles.webSafeRefreshBtn}
+              onPress={onRefresh}
+              disabled={refreshing}
+            >
+              {refreshing ? (
+                <ActivityIndicator size="small" color={ANN.red} />
+              ) : (
+                <>
+                  <Ionicons
+                    name="reload"
+                    size={16}
+                    color={ANN.red}
+                    style={{ marginRight: 6 }}
+                  />
+                  <Text style={styles.webSafeRefreshText}>Tap to Refresh</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <FlatList
+            data={displayOrders}
+            keyExtractor={(item) => `order-${item.id}`}
+            renderItem={renderOrderItem}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            removeClippedSubviews={Platform.OS !== "ios"}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                tintColor={ANN.red}
+              />
+            }
+            ListFooterComponent={() => (
+              <View style={styles.askBillContainer}>
+                <TouchableOpacity
+                  style={styles.askBillBtn}
+                  onPress={async () => {
+                    if (sessionToken) {
+                      try {
+                        // Silently notify the manager in the background
+                        await SessionService.requestBill(sessionToken);
+                      } catch (e) {}
+                    }
+                    billTabNotifier.show();
+                    setTimeout(() => {
+                      router.push({
+                        pathname: "/(tabs)/bills",
+                        params: { billRequested: "true" },
+                      });
+                    }, 100);
+                  }}
+                >
+                  <MaterialIcons name="receipt-long" size={24} color="#fff" />
+                  <Text style={styles.askBillBtnText}>Ask for Bill</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          />
+        )}
+        <TouchableOpacity style={styles.fab} onPress={handleCallWaiter}>
+          <Ionicons name="notifications-outline" size={24} color="#FFF" />
+        </TouchableOpacity>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  // ── BACKGROUND STYLES ──
+  mainWrapper: {
     flex: 1,
     backgroundColor: THEME.background,
+  },
+  bgImage: {
+    ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+    opacity: 0.15, // Doodle watermark effect
+  },
+  bgOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(255, 255, 255, 0.85)", // Glass effect opacity
+  },
+  container: {
+    flex: 1,
     maxWidth: 480,
     width: "100%",
     alignSelf: "center",
@@ -538,11 +587,11 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     paddingHorizontal: 20,
     borderBottomWidth: 1,
-    borderBottomColor: THEME.border,
+    borderBottomColor: "rgba(0,0,0,0.05)",
     alignItems: "center",
-    backgroundColor: THEME.cardBg,
+    backgroundColor: "rgba(255, 255, 255, 0.6)",
   },
-  headerTitle: { fontSize: 20, fontWeight: "bold", color: THEME.textPrimary },
+  headerTitle: { fontSize: 20, fontWeight: "900", color: ANN.darkBlue },
   statusIndicator: {
     flexDirection: "row",
     alignItems: "center",
@@ -566,29 +615,31 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: THEME.background,
+    backgroundColor: "rgba(255,255,255,0.6)",
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: "rgba(42, 71, 149, 0.2)",
     ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)),
   },
   scrollContent: { padding: 16, paddingBottom: 100 },
+
+  // ── ORDER CARD (GLASS EFFECT) ──
   orderCard: {
-    backgroundColor: THEME.cardBg,
+    backgroundColor: "rgba(255, 255, 255, 0.75)",
     padding: 16,
-    borderRadius: 12,
-    marginBottom: 16,
+    borderRadius: 16,
+    marginBottom: 20,
     borderWidth: 1,
-    borderColor: THEME.border,
+    borderColor: "rgba(42, 71, 149, 0.15)",
     ...Platform.select({
-      web: { boxShadow: "0px 2px 8px rgba(0,0,0,0.04)" } as any,
+      web: { boxShadow: "0px 4px 12px rgba(0,0,0,0.05)" } as any,
       default: {
-        shadowColor: THEME.textPrimary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
+        shadowColor: ANN.darkBlue,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.08,
         shadowRadius: 8,
-        elevation: 2,
+        elevation: 3,
       },
     }),
   },
@@ -597,37 +648,106 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.border,
   },
-  orderId: { fontSize: 16, fontWeight: "bold", color: THEME.textPrimary },
-  orderTime: { fontSize: 13, color: THEME.textSecondary, marginTop: 2 },
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
+  orderId: { fontSize: 18, fontWeight: "900", color: ANN.darkBlue },
+  orderTime: { fontSize: 12, color: THEME.textSecondary, marginTop: 2 },
+
+  cancelledBadge: {
+    backgroundColor: THEME.danger + "20",
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
-  statusText: { fontSize: 12, fontWeight: "bold" },
-  itemsList: { gap: 12 },
+  cancelledText: { fontSize: 12, fontWeight: "bold", color: THEME.danger },
+
+  // ── VISUAL TRACKER STYLES ──
+  trackerContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    position: "relative",
+    paddingHorizontal: 10,
+    marginBottom: 24,
+    marginTop: 8,
+  },
+  trackerLineBg: {
+    position: "absolute",
+    top: 18, // Center of the icons
+    left: 30,
+    right: 30,
+    height: 3,
+    backgroundColor: "#E2E8F0",
+    zIndex: 1,
+  },
+  trackerLineActive: {
+    position: "absolute",
+    top: 18,
+    left: 30,
+    height: 3,
+    backgroundColor: ANN.red, // Orange brand color
+    zIndex: 2,
+  },
+  stepWrapper: {
+    alignItems: "center",
+    zIndex: 3,
+    width: 60,
+  },
+  stepIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  stepIconContainerCompleted: {
+    backgroundColor: ANN.red, // Completed steps are solid orange
+  },
+  stepIconContainerActiveGlow: {
+    backgroundColor: ANN.red,
+    borderWidth: 4,
+    borderColor: ANN.orangeLight, // Outer glow effect
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    transform: [{ translateY: -4 }], // Adjust for size increase to keep center aligned
+  },
+  stepIconContainerPending: {
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  stepLabel: {
+    fontSize: 10,
+    marginTop: 8,
+    textAlign: "center",
+  },
+  stepLabelCompleted: { color: ANN.red, fontWeight: "bold" },
+  stepLabelCurrent: {
+    color: ANN.red,
+    fontWeight: "900",
+    borderBottomWidth: 2,
+    borderBottomColor: ANN.red,
+  },
+  stepLabelPending: { color: THEME.textSecondary, fontWeight: "600" },
+
+  // ── ITEMS LIST ──
+  itemsList: { gap: 12, marginTop: 8 },
   orderItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
   },
   itemQtyBadge: {
-    color: THEME.primary,
-    fontWeight: "bold",
+    color: ANN.darkBlue,
+    fontWeight: "900",
     fontSize: 14,
     marginRight: 8,
     width: 24,
   },
-  itemText: { fontSize: 15, fontWeight: "500", color: THEME.textPrimary },
-  itemPrice: { fontSize: 15, color: THEME.textPrimary, fontWeight: "600" },
+  itemText: { fontSize: 15, fontWeight: "bold", color: THEME.textPrimary },
+  itemPrice: { fontSize: 15, color: ANN.darkBlue, fontWeight: "900" },
   itemNote: {
-    fontSize: 13,
+    fontSize: 12,
     color: THEME.textSecondary,
     fontStyle: "italic",
     marginTop: 4,
@@ -635,16 +755,16 @@ const styles = StyleSheet.create({
   orderLevelNote: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FFFBEB",
+    backgroundColor: ANN.blueLight,
     padding: 12,
     marginTop: 16,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#FEF3C7",
+    borderColor: "rgba(42, 71, 149, 0.2)",
   },
   orderLevelNoteText: {
     fontSize: 13,
-    color: "#B45309",
+    color: ANN.darkBlue,
     marginLeft: 8,
     flex: 1,
   },
@@ -655,9 +775,12 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingTop: 16,
     borderTopWidth: 1,
-    borderTopColor: THEME.border,
+    borderTopColor: "rgba(0,0,0,0.05)",
   },
-  totalText: { fontSize: 16, fontWeight: "bold", color: THEME.textPrimary },
+  totalText: { fontSize: 16, fontWeight: "bold", color: THEME.textSecondary },
+  totalPriceLarge: { fontSize: 20, fontWeight: "900", color: ANN.red },
+
+  // ── EMPTY STATE ──
   emptyState: {
     flex: 1,
     justifyContent: "center",
@@ -666,9 +789,9 @@ const styles = StyleSheet.create({
     marginTop: 60,
   },
   emptyStateTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: THEME.textPrimary,
+    fontSize: 20,
+    fontWeight: "900",
+    color: ANN.darkBlue,
     marginTop: 16,
     marginBottom: 8,
   },
@@ -676,23 +799,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: THEME.textSecondary,
     textAlign: "center",
-    marginTop: 8,
+    marginTop: 4,
   },
   webSafeRefreshBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: THEME.primaryLight,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    backgroundColor: ANN.orangeLight,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderRadius: 20,
     marginTop: 24,
+    borderWidth: 1,
+    borderColor: ANN.orange,
     ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)),
   },
   webSafeRefreshText: {
-    color: THEME.primary,
+    color: ANN.red,
     fontWeight: "bold",
     fontSize: 14,
   },
+
+  // ── FLOATING ACTION BUTTON (CALL WAITER) ──
   fab: {
     position: "absolute",
     bottom: 24,
@@ -700,33 +827,40 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: THEME.primary,
+    backgroundColor: ANN.darkBlue,
     justifyContent: "center",
     alignItems: "center",
     ...Platform.select({
       default: {
-        shadowColor: THEME.primary,
+        shadowColor: ANN.darkBlue,
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
+        shadowOpacity: 0.35,
         shadowRadius: 8,
         elevation: 5,
       },
     }),
   },
+
+  // ── ASK BILL BUTTON ──
   askBillContainer: { marginTop: 10, marginBottom: 40 },
   askBillBtn: {
-    backgroundColor: THEME.primary,
+    backgroundColor: ANN.red,
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
     padding: 16,
-    borderRadius: 12,
+    borderRadius: 14,
     gap: 10,
-    shadowColor: THEME.primary,
+    shadowColor: ANN.red,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
     elevation: 4,
   },
-  askBillBtnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  askBillBtnText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "900",
+    letterSpacing: 0.5,
+  },
 });
