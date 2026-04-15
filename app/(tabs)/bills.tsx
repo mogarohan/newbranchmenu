@@ -13,7 +13,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Linking,
   Platform,
   RefreshControl,
   SafeAreaView,
@@ -659,16 +658,6 @@ export default function BillsTab() {
                         )}
                       </View>
                       <Text style={styles.qrScanText}>SCAN TO PAY</Text>
-                      <Text style={styles.qrMerchantText}>
-                        Merchant ID: {upiId}
-                      </Text>
-
-                      <TouchableOpacity
-                        style={styles.openUpiBtn}
-                        onPress={() => Linking.openURL(upiString)}
-                      >
-                        <Text style={styles.openUpiBtnText}>Open UPI App</Text>
-                      </TouchableOpacity>
                     </View>
                   )}
 
@@ -778,20 +767,6 @@ export default function BillsTab() {
                     ENCRYPTED TRANSACTION
                   </Text>
                 </View>
-              </View>
-
-              {/* ── INFO BANNER ── */}
-              <View style={styles.infoBanner}>
-                <Ionicons
-                  name="information-circle"
-                  size={20}
-                  color={ANN.darkBlue}
-                  style={{ marginTop: 2 }}
-                />
-                <Text style={styles.infoBannerText}>
-                  Points earned from this order will be credited to your{" "}
-                  {restaurantName} account within 24 hours.
-                </Text>
               </View>
             </>
           )}
