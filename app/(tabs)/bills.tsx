@@ -1,4 +1,4 @@
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import * as Print from "expo-print";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Sharing from "expo-sharing";
@@ -12,7 +12,7 @@ import React, {
 import {
   ActivityIndicator,
   Alert,
-  Linking,
+  Image,
   Platform,
   RefreshControl,
   SafeAreaView,
@@ -29,6 +29,19 @@ import { useSession } from "../../context/SessionContext";
 import { initEcho } from "../../services/echo";
 import { OrderService } from "../../services/order.service";
 import { SessionService } from "../../services/session.service";
+
+// ─── Ann Sathi Brand Colors ───────────────────────────────────────────────────
+const ANN = {
+  orange: "#fe9a54",
+  red: "#f16b3f",
+  blue: "#456aba",
+  darkBlue: "#2a4795",
+  orangeLight: "#fff4ec",
+  redLight: "#fff0eb",
+  blueLight: "#eef2fb",
+  darkBlueLight: "#e8ecf7",
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function BillsTab() {
   const {
@@ -209,11 +222,14 @@ export default function BillsTab() {
 
   const handleSelectMethod = async (method: "cash" | "upi" | "pending") => {
     if (!sessionToken) return;
+    // Optimistic UI update
+    setPaymentData((prev: any) => ({ ...prev, payment_method: method }));
     try {
       await SessionService.selectPaymentMethod(sessionToken, method);
-      setPaymentData((prev: any) => ({ ...prev, payment_method: method }));
     } catch (e) {
       Alert.alert("Error", "Could not select payment method.");
+      // Revert on fail
+      fetchOrders();
     }
   };
 
@@ -273,22 +289,15 @@ export default function BillsTab() {
   // 👇 PRODUCTION-GRADE UPI STRING GENERATION 👇
   const upiId = paymentData?.upi_id || menuData?.restaurant?.upi_id || "";
 
-  // 1. Strictly encode all dynamic parameters
   const pa = encodeURIComponent(upiId);
   const pn = encodeURIComponent(restaurantName);
   const tn = encodeURIComponent(`Bill for Table ${tableNum}`);
-
-  // 2. Pull the backend-generated Transaction ID and MC Code
   const tr = encodeURIComponent(
     paymentData?.transaction_reference || `TXN${Date.now()}`,
   );
   const mc = encodeURIComponent(paymentData?.merchant_category_code || "5812");
-
-  // 3. Format amount strictly to 2 decimal places
   const am = finalGrandTotal.toFixed(2);
   const cu = "INR";
-
-  // 4. Assemble the deep link
   const upiString = `upi://pay?pa=${pa}&pn=${pn}&tr=${tr}&tn=${tn}&mc=${mc}&am=${am}&cu=${cu}`;
 
   const handleDownloadBill = async () => {
@@ -428,278 +437,734 @@ export default function BillsTab() {
     }
   };
 
+  const activeMethod = paymentData?.payment_method || "upi"; // Default to UPI for UI if pending
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Final Bill</Text>
-        <TouchableOpacity
-          style={styles.refreshBtn}
-          onPress={onRefresh}
-          disabled={refreshing || loading}
-        >
-          <Ionicons name="reload" size={18} color={THEME.textPrimary} />
-        </TouchableOpacity>
-      </View>
+    <View style={styles.mainWrapper}>
+      {/* ─── BACKGROUND IMAGE & GLASS OVERLAY ─── */}
+      <Image
+        source={require("../../assets/images/bg.png")}
+        style={styles.bgImage}
+      />
+      <View style={styles.bgOverlay} />
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={THEME.primary}
-          />
-        }
-      >
-        {loading && !paymentData ? (
-          <View style={styles.emptyState}>
-            <ActivityIndicator size="large" color={THEME.primary} />
-            <Text style={styles.emptyStateText}>Loading bill...</Text>
-          </View>
-        ) : !paymentData ? (
-          <View style={styles.emptyState}>
-            <Ionicons
-              name="hourglass-outline"
-              size={64}
-              color={THEME.textSecondary}
-              style={{ opacity: 0.3 }}
+      <SafeAreaView style={styles.container}>
+        {/* ── HEADER ── */}
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.back()}
+          >
+            <MaterialIcons name="arrow-back" size={24} color={ANN.darkBlue} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Bill Details</Text>
+          <TouchableOpacity
+            style={styles.refreshBtn}
+            onPress={onRefresh}
+            disabled={refreshing || loading}
+          >
+            <Ionicons name="reload" size={20} color={ANN.darkBlue} />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={ANN.red}
             />
-            <Text style={styles.emptyStateTitle}>Bill Not Generated Yet</Text>
-            <Text style={styles.emptyStateText}>
-              Please wait while the manager generates your final bill with
-              applicable taxes and discounts.
-            </Text>
-          </View>
-        ) : (
-          <View style={{ padding: 16 }}>
-            {/* BILL SUMMARY CARD */}
-            <View style={styles.receiptCard}>
-              <Text style={styles.receiptTitle}>Table {tableNum}</Text>
-              <Text style={styles.receiptSubtitle}>FINAL BILLING SUMMARY</Text>
-
-              <View style={styles.hostBadge}>
-                <Text style={styles.hostBadgeText}>
-                  👑 HOST: {displayHostName}
-                </Text>
-                <Text style={styles.hostBadgeSub}>
-                  ({totalItemsCount} Items)
+          }
+        >
+          {loading && !paymentData ? (
+            <View style={styles.emptyState}>
+              <ActivityIndicator size="large" color={ANN.orange} />
+              <Text style={styles.emptyStateText}>Loading bill details...</Text>
+            </View>
+          ) : !paymentData ? (
+            <View style={styles.emptyState}>
+              <Ionicons
+                name="hourglass-outline"
+                size={70}
+                color={ANN.darkBlueLight}
+              />
+              <Text style={styles.emptyStateTitle}>Bill Not Generated</Text>
+              <Text style={styles.emptyStateText}>
+                Please wait while the manager generates your final bill with
+                applicable taxes and discounts.
+              </Text>
+              <TouchableOpacity
+                style={styles.askBillBtnFallback}
+                onPress={async () => {
+                  if (sessionToken) {
+                    try {
+                      await SessionService.requestBill(sessionToken);
+                      Alert.alert(
+                        "Requested",
+                        "Manager has been notified for the bill.",
+                      );
+                    } catch (e) {}
+                  }
+                }}
+              >
+                <Text style={styles.askBillBtnText}>Remind Manager</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              {/* ── PAGE TITLE SECTION ── */}
+              <View style={styles.pageTitleContainer}>
+                <Text style={styles.pageTitle}>Final Summary</Text>
+                <Text style={styles.pageSubtitle}>
+                  {isBillPaid
+                    ? "Your payment was successful. Thank you!"
+                    : "Review your order and select a payment method"}
                 </Text>
               </View>
 
-              <View style={styles.itemsContainer}>
-                {consolidatedItems.map((item, idx) => (
-                  <View key={idx} style={styles.itemRow}>
-                    <View style={{ flexDirection: "row", flex: 1 }}>
-                      <Text style={styles.itemQty}>{item.quantity}x</Text>
-                      <View>
-                        <Text style={styles.itemName}>{item.name}</Text>
-                        <Text style={styles.itemCat}>[ITEM]</Text>
+              {/* ── CARD 1: ORDER ITEMS ── */}
+              <View style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Text style={styles.cardTitle}>Order Items</Text>
+                  <Text style={styles.tableBadge}>Table #{tableNum}</Text>
+                </View>
+
+                <View style={styles.tableHeader}>
+                  <Text style={[styles.thText, { flex: 2 }]}>ITEM</Text>
+                  <Text
+                    style={[styles.thText, { width: 40, textAlign: "center" }]}
+                  >
+                    QTY
+                  </Text>
+                  <Text
+                    style={[styles.thText, { width: 80, textAlign: "right" }]}
+                  >
+                    PRICE
+                  </Text>
+                </View>
+
+                <View style={styles.tableBody}>
+                  {consolidatedItems.map((item, idx) => (
+                    <View key={idx} style={styles.itemRow}>
+                      <View
+                        style={{
+                          flex: 2,
+                          flexDirection: "row",
+                          alignItems: "center",
+                        }}
+                      >
+                        <View style={styles.itemIconBox}>
+                          <Ionicons
+                            name="fast-food"
+                            size={14}
+                            color={ANN.darkBlue}
+                          />
+                        </View>
+                        <Text style={styles.itemNameText} numberOfLines={2}>
+                          {item.name}
+                        </Text>
                       </View>
+                      <Text
+                        style={[
+                          styles.itemQtyText,
+                          { width: 40, textAlign: "center" },
+                        ]}
+                      >
+                        {String(item.quantity).padStart(2, "0")}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.itemPriceText,
+                          { width: 80, textAlign: "right" },
+                        ]}
+                      >
+                        {currency}
+                        {(item.total_price || 0).toFixed(2)}
+                      </Text>
                     </View>
-                    <Text style={styles.itemPrice}>
-                      {currency}
-                      {(item.total_price || 0).toFixed(2)}
-                    </Text>
-                  </View>
-                ))}
+                  ))}
+                </View>
               </View>
 
-              <View style={styles.summarySection}>
-                <View style={styles.summaryRow}>
-                  <Text style={styles.summaryLabel}>Subtotal:</Text>
-                  <Text style={styles.summaryValue}>
+              {/* ── CARD 2: PAYMENT METHOD (Only if not paid) ── */}
+              {!isBillPaid && (
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Payment Method</Text>
+
+                  <View style={styles.methodToggleContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.methodBox,
+                        activeMethod === "upi" && styles.methodBoxActive,
+                      ]}
+                      onPress={() => handleSelectMethod("upi")}
+                    >
+                      <Ionicons
+                        name="qr-code"
+                        size={20}
+                        color={
+                          activeMethod === "upi"
+                            ? ANN.darkBlue
+                            : THEME.textSecondary
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.methodText,
+                          activeMethod === "upi" && styles.methodTextActive,
+                        ]}
+                      >
+                        Digital (UPI)
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.methodBox,
+                        activeMethod === "cash" && styles.methodBoxActive,
+                      ]}
+                      onPress={() => handleSelectMethod("cash")}
+                    >
+                      <Ionicons
+                        name="wallet"
+                        size={20}
+                        color={
+                          activeMethod === "cash"
+                            ? ANN.darkBlue
+                            : THEME.textSecondary
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.methodText,
+                          activeMethod === "cash" && styles.methodTextActive,
+                        ]}
+                      >
+                        Cash
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* QR Code Display if UPI is selected */}
+                  {activeMethod === "upi" && (
+                    <View style={styles.qrDisplayBox}>
+                      <View style={styles.qrInner}>
+                        {upiId ? (
+                          <QRCode value={upiString} size={140} />
+                        ) : (
+                          <Text>UPI ID not found</Text>
+                        )}
+                      </View>
+                      <Text style={styles.qrScanText}>SCAN TO PAY</Text>
+                    </View>
+                  )}
+
+                  {activeMethod === "cash" && (
+                    <View style={styles.cashDisplayBox}>
+                      <Ionicons
+                        name="cash-outline"
+                        size={40}
+                        color={ANN.orange}
+                      />
+                      <Text style={styles.cashScanText}>PAY AT COUNTER</Text>
+                      <Text style={styles.cashMerchantText}>
+                        Please hand over cash to the staff member.
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* ── CARD 3: BILL BREAKDOWN ── */}
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Bill Breakdown</Text>
+
+                <View style={styles.breakdownRow}>
+                  <Text style={styles.breakdownLabel}>Subtotal</Text>
+                  <Text style={styles.breakdownValue}>
                     {currency}
                     {finalSubtotal.toFixed(2)}
                   </Text>
                 </View>
+
                 {finalDiscount > 0 && (
-                  <View style={styles.summaryRow}>
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Discount</Text>
                     <Text
-                      style={[styles.summaryLabel, { color: THEME.success }]}
-                    >
-                      Discount:
-                    </Text>
-                    <Text
-                      style={[styles.summaryValue, { color: THEME.success }]}
+                      style={[styles.breakdownValue, { color: THEME.success }]}
                     >
                       -{currency}
                       {finalDiscount.toFixed(2)}
                     </Text>
                   </View>
                 )}
+
                 {finalTax > 0 && (
-                  <View style={styles.summaryRow}>
-                    <Text
-                      style={[styles.summaryLabel, { color: THEME.danger }]}
-                    >
-                      Tax:
-                    </Text>
-                    <Text
-                      style={[styles.summaryValue, { color: THEME.danger }]}
-                    >
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Tax & Charges</Text>
+                    <Text style={styles.breakdownValue}>
                       +{currency}
                       {finalTax.toFixed(2)}
                     </Text>
                   </View>
                 )}
+
+                <View style={styles.dashedDivider} />
+
                 <View style={styles.grandTotalRow}>
-                  <Text style={styles.grandTotalLabel}>GRAND TOTAL</Text>
+                  <View>
+                    <Text style={styles.grandTotalLabel}>Grand Total</Text>
+                    <Text style={styles.inclusiveText}>
+                      Inclusive of all local taxes
+                    </Text>
+                  </View>
                   <Text style={styles.grandTotalValue}>
                     {currency}
                     {finalGrandTotal.toFixed(2)}
                   </Text>
                 </View>
-              </View>
-            </View>
 
-            {/* DYNAMIC PAYMENT UI */}
-            {isBillPaid ? (
-              <TouchableOpacity
-                style={styles.downloadBigBtn}
-                onPress={handleDownloadBill}
-                disabled={isDownloading}
-              >
-                {isDownloading ? (
-                  <ActivityIndicator color="#fff" />
+                {/* ── MAIN ACTION BUTTON ── */}
+                {isBillPaid ? (
+                  <TouchableOpacity
+                    style={styles.primaryActionBtn}
+                    onPress={handleDownloadBill}
+                    disabled={isDownloading}
+                  >
+                    {isDownloading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name="document-text" size={20} color="#fff" />
+                        <Text style={styles.primaryActionBtnText}>
+                          Download Receipt
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
                 ) : (
-                  <>
-                    <Ionicons
-                      name="document-text-outline"
-                      size={24}
-                      color="#fff"
+                  <View style={styles.pendingActionBox}>
+                    <ActivityIndicator
+                      size="small"
+                      color={ANN.orange}
+                      style={{ marginRight: 8 }}
                     />
-                    <Text style={styles.downloadBigBtnText}>
-                      Download PDF Bill
+                    <Text style={styles.pendingActionText}>
+                      Waiting for restaurant confirmation...
                     </Text>
-                  </>
+                  </View>
                 )}
-              </TouchableOpacity>
-            ) : isBillPending && paymentData.payment_method === "pending" ? (
-              <View>
-                <Text style={styles.methodHeader}>Select Payment Method</Text>
-                <View style={{ flexDirection: "row", gap: 12 }}>
-                  <TouchableOpacity
-                    style={styles.methodBtn}
-                    onPress={() => handleSelectMethod("cash")}
-                  >
-                    <Ionicons
-                      name="cash-outline"
-                      size={24}
-                      color={THEME.primary}
-                    />
-                    <Text style={styles.methodBtnText}>Pay with Cash</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.methodBtn}
-                    onPress={() => handleSelectMethod("upi")}
-                  >
-                    <Ionicons
-                      name="qr-code-outline"
-                      size={24}
-                      color={THEME.primary}
-                    />
-                    <Text style={styles.methodBtnText}>Pay with UPI</Text>
-                  </TouchableOpacity>
+
+                <View style={styles.secureTransactionRow}>
+                  <MaterialIcons
+                    name="security"
+                    size={14}
+                    color={THEME.textSecondary}
+                  />
+                  <Text style={styles.secureTransactionText}>
+                    ENCRYPTED TRANSACTION
+                  </Text>
                 </View>
               </View>
-            ) : isBillPending && paymentData.payment_method === "upi" ? (
-              <View style={styles.upiContainer}>
-                <Text style={styles.upiHeader}>Scan to Pay</Text>
-                <View style={styles.qrWrapper}>
-                  {upiId ? (
-                    <QRCode value={upiString} size={180} />
-                  ) : (
-                    <Text>UPI ID not configured</Text>
-                  )}
-                </View>
-                <Text style={styles.upiSubText}>ID: {upiId}</Text>
-                <TouchableOpacity
-                  style={styles.upiLinkBtn}
-                  onPress={() => Linking.openURL(upiString)}
-                >
-                  <Text style={styles.upiLinkBtnText}>Open UPI App</Text>
-                </TouchableOpacity>
-                <Text style={styles.waitingText}>
-                  Waiting for manager to confirm payment...
-                </Text>
-
-                {/* 👇 NEW: Change Method Button 👇 */}
-                <TouchableOpacity
-                  style={styles.changeMethodBtn}
-                  onPress={() => handleSelectMethod("pending")}
-                >
-                  <Text style={styles.changeMethodText}>
-                    Change Payment Method
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={styles.unpaidWarning}>
-                <Text style={styles.unpaidText}>
-                  Please pay cash at the counter. Waiting for manager
-                  confirmation...
-                </Text>
-
-                {/* 👇 NEW: Change Method Button 👇 */}
-                <TouchableOpacity
-                  style={styles.changeMethodBtn}
-                  onPress={() => handleSelectMethod("pending")}
-                >
-                  <Text style={styles.changeMethodText}>
-                    Change Payment Method
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+            </>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // ── BACKGROUND ──
+  mainWrapper: {
+    flex: 1,
+    backgroundColor: THEME.background,
+  },
+  bgImage: {
+    ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+    opacity: 0.15,
+  },
+  bgOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(248, 250, 252, 0.88)", // Light Frosted Glass
+  },
   container: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
     maxWidth: 480,
     width: "100%",
     alignSelf: "center",
   },
+
+  // ── HEADER ──
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 20,
     paddingTop: Platform.OS === "android" ? 40 : 16,
     paddingBottom: 16,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.border,
-    alignItems: "center",
-    backgroundColor: THEME.cardBg,
+    backgroundColor: "transparent",
   },
-  headerTitle: { fontSize: 20, fontWeight: "bold", color: THEME.textPrimary },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    justifyContent: "center",
+    alignItems: "flex-start",
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: ANN.darkBlue,
+  },
   refreshBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: THEME.background,
+    width: 40,
+    height: 40,
+    justifyContent: "center",
+    alignItems: "flex-end",
+  },
+
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 40,
+  },
+
+  // ── PAGE TITLES ──
+  pageTitleContainer: {
+    alignItems: "center",
+    marginVertical: 20,
+  },
+  pageTitle: {
+    fontSize: 26,
+    fontWeight: "900",
+    color: ANN.darkBlue,
+    marginBottom: 6,
+  },
+  pageSubtitle: {
+    fontSize: 14,
+    color: THEME.textSecondary,
+    textAlign: "center",
+  },
+
+  // ── CARDS (GLASS EFFECT) ──
+  card: {
+    backgroundColor: "rgba(255, 255, 255, 0.8)",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "rgba(42, 71, 149, 0.1)",
+    ...Platform.select({
+      web: { boxShadow: "0px 4px 15px rgba(0,0,0,0.04)" } as any,
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.05,
+        shadowRadius: 10,
+        elevation: 2,
+      },
+    }),
+  },
+  cardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  tableBadge: {
+    fontSize: 13,
+    color: THEME.textSecondary,
+    fontWeight: "600",
+  },
+
+  // ── TABLE UI ──
+  tableHeader: {
+    flexDirection: "row",
+    backgroundColor: ANN.darkBlueLight,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  thText: {
+    fontSize: 11,
+    fontWeight: "bold",
+    color: ANN.darkBlue,
+    letterSpacing: 0.5,
+  },
+  tableBody: {
+    paddingHorizontal: 4,
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0,0,0,0.04)",
+  },
+  itemIconBox: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: ANN.blueLight,
     justifyContent: "center",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: THEME.border,
-    ...(Platform.OS === "web" ? { cursor: "pointer" } : ({} as any)),
+    marginRight: 10,
   },
-  scrollContent: { flexGrow: 1, paddingBottom: 40 },
+  itemNameText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1f2937",
+    flex: 1,
+  },
+  itemQtyText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: THEME.textSecondary,
+  },
+  itemPriceText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#111827",
+  },
+
+  // ── PAYMENT METHOD SELECTOR ──
+  methodToggleContainer: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  methodBox: {
+    flex: 1,
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    backgroundColor: "#f8fafc",
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: "transparent",
+  },
+  methodBoxActive: {
+    backgroundColor: "#ffffff",
+    borderColor: ANN.darkBlue,
+    ...Platform.select({
+      web: { boxShadow: "0px 4px 10px rgba(42,71,149,0.1)" } as any,
+      default: {
+        shadowColor: ANN.darkBlue,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+      },
+    }),
+  },
+  methodText: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: "600",
+    color: THEME.textSecondary,
+  },
+  methodTextActive: {
+    color: ANN.darkBlue,
+    fontWeight: "800",
+  },
+
+  // ── QR DISPLAY BOX ──
+  qrDisplayBox: {
+    backgroundColor: ANN.darkBlueLight,
+    borderRadius: 12,
+    padding: 20,
+    alignItems: "center",
+  },
+  qrInner: {
+    backgroundColor: "#fff",
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  qrScanText: {
+    fontSize: 12,
+    fontWeight: "bold",
+    color: THEME.textSecondary,
+    letterSpacing: 1,
+  },
+  qrMerchantText: {
+    fontSize: 13,
+    color: "#111827",
+    marginTop: 4,
+    fontWeight: "500",
+  },
+  openUpiBtn: {
+    marginTop: 16,
+    backgroundColor: ANN.darkBlue,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+  },
+  openUpiBtnText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "bold",
+  },
+
+  cashDisplayBox: {
+    backgroundColor: ANN.orangeLight,
+    borderRadius: 12,
+    padding: 30,
+    alignItems: "center",
+  },
+  cashScanText: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: ANN.red,
+    letterSpacing: 1,
+    marginTop: 12,
+  },
+  cashMerchantText: {
+    fontSize: 13,
+    color: THEME.textSecondary,
+    marginTop: 4,
+    textAlign: "center",
+  },
+
+  // ── BILL BREAKDOWN ──
+  breakdownRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+  },
+  breakdownLabel: {
+    fontSize: 14,
+    color: THEME.textSecondary,
+    fontWeight: "500",
+  },
+  breakdownValue: {
+    fontSize: 14,
+    color: "#111827",
+    fontWeight: "700",
+  },
+  dashedDivider: {
+    borderBottomWidth: 1,
+    borderBottomColor: "#cbd5e1",
+    borderStyle: "dashed",
+    marginVertical: 16,
+  },
+  grandTotalRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  grandTotalLabel: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#111827",
+  },
+  inclusiveText: {
+    fontSize: 10,
+    color: THEME.textSecondary,
+    fontStyle: "italic",
+    marginTop: 2,
+  },
+  grandTotalValue: {
+    fontSize: 28,
+    fontWeight: "900",
+    color: ANN.darkBlue,
+  },
+
+  // ── ACTION BUTTONS ──
+  primaryActionBtn: {
+    backgroundColor: ANN.darkBlue,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    borderRadius: 12,
+    gap: 8,
+    shadowColor: ANN.darkBlue,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  primaryActionBtnText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  pendingActionBox: {
+    backgroundColor: ANN.orangeLight,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: ANN.orange,
+  },
+  pendingActionText: {
+    color: ANN.red,
+    fontSize: 14,
+    fontWeight: "bold",
+  },
+
+  secureTransactionRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 16,
+    gap: 6,
+  },
+  secureTransactionText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: THEME.textSecondary,
+    letterSpacing: 0.5,
+  },
+
+  // ── INFO BANNER ──
+  infoBanner: {
+    flexDirection: "row",
+    backgroundColor: "rgba(69, 106, 186, 0.1)", // Light Blue Tint
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "rgba(42, 71, 149, 0.15)",
+  },
+  infoBannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: ANN.darkBlue,
+    lineHeight: 18,
+    fontWeight: "500",
+  },
+
+  // ── EMPTY STATES ──
   emptyState: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     padding: 40,
+    marginTop: 60,
   },
   emptyStateTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: THEME.textPrimary,
+    fontSize: 20,
+    fontWeight: "900",
+    color: ANN.darkBlue,
     marginTop: 16,
     marginBottom: 8,
   },
@@ -707,170 +1172,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: THEME.textSecondary,
     textAlign: "center",
+    lineHeight: 22,
   },
-  receiptCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 24,
-    width: "100%",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginBottom: 24,
-    ...Platform.select({
-      default: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        elevation: 2,
-      },
-    }),
-  },
-  receiptTitle: {
-    fontSize: 22,
-    fontWeight: "900",
-    textAlign: "center",
-    color: "#111827",
-    textTransform: "uppercase",
-  },
-  receiptSubtitle: {
-    fontSize: 10,
-    fontWeight: "700",
-    textAlign: "center",
-    color: "#6B7280",
-    letterSpacing: 1.5,
-    marginBottom: 24,
-  },
-  hostBadge: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    backgroundColor: "#F3F4F6",
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 24,
-  },
-  hostBadgeText: { fontWeight: "700", fontSize: 14, color: "#111827" },
-  hostBadgeSub: { fontWeight: "400", fontSize: 12, color: "#6B7280" },
-  itemsContainer: { marginBottom: 24 },
-  itemRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  itemQty: { color: "#6B7280", fontWeight: "700", marginRight: 6 },
-  itemName: { fontWeight: "700", color: "#111827", fontSize: 14 },
-  itemCat: { fontSize: 10, color: "#6B7280", marginTop: 2 },
-  itemPrice: { fontWeight: "800", color: "#111827", fontSize: 14 },
-  summarySection: {
-    borderTopWidth: 2,
-    borderTopColor: "#111827",
-    paddingTop: 16,
-    marginTop: 12,
-  },
-  summaryRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  summaryLabel: { fontSize: 14, color: "#4B5563" },
-  summaryValue: { fontSize: 14, color: "#111827", fontWeight: "700" },
-  grandTotalRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#D1D5DB",
-    borderStyle: "dashed",
-  },
-  grandTotalLabel: { fontSize: 20, fontWeight: "900", color: "#111827" },
-  grandTotalValue: { fontSize: 20, fontWeight: "900", color: "#111827" },
-  downloadBigBtn: {
-    width: "100%",
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: THEME.primary,
-    paddingVertical: 18,
-    borderRadius: 16,
-    gap: 10,
-    shadowColor: THEME.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  downloadBigBtnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
-  unpaidWarning: {
-    backgroundColor: "#fffbeb",
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#fde68a",
-    width: "100%",
-  },
-  unpaidText: { color: "#d97706", textAlign: "center", fontWeight: "600" },
-  methodHeader: {
-    fontSize: 16,
-    fontWeight: "bold",
-    textAlign: "center",
-    marginBottom: 12,
-    color: THEME.textPrimary,
-  },
-  methodBtn: {
-    flex: 1,
-    backgroundColor: THEME.cardBg,
-    borderWidth: 2,
-    borderColor: THEME.primary,
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  methodBtnText: { color: THEME.primary, fontWeight: "bold", marginTop: 8 },
-  upiContainer: {
-    alignItems: "center",
-    backgroundColor: THEME.cardBg,
-    padding: 24,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: THEME.border,
-  },
-  upiHeader: { fontSize: 18, fontWeight: "bold", marginBottom: 16 },
-  qrWrapper: {
-    padding: 12,
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    elevation: 2,
-  },
-  upiSubText: { marginTop: 12, color: THEME.textSecondary, fontWeight: "bold" },
-  upiLinkBtn: {
-    marginTop: 16,
-    backgroundColor: THEME.primary,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 24,
-  },
-  upiLinkBtnText: { color: "#fff", fontWeight: "bold" },
-  waitingText: {
-    marginTop: 16,
-    color: THEME.warning,
-    fontWeight: "bold",
-    fontStyle: "italic",
-    textAlign: "center",
-  },
-  changeMethodBtn: {
+  askBillBtnFallback: {
     marginTop: 24,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: THEME.border,
-    alignSelf: "center",
+    backgroundColor: ANN.orange,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 12,
   },
-  changeMethodText: {
-    color: THEME.textSecondary,
+  askBillBtnText: {
+    color: "#fff",
     fontWeight: "bold",
-    fontSize: 12,
-    textAlign: "center",
+    fontSize: 15,
   },
 });

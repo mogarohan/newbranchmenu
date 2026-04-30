@@ -2,6 +2,7 @@ import { MaterialIcons } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
 import {
   FlatList,
+  Image,
   LayoutAnimation,
   Platform,
   SafeAreaView,
@@ -11,9 +12,21 @@ import {
   UIManager,
   View,
 } from "react-native";
-import { WAITER_THEME } from "../../../constants/theme";
 import { useWaiter } from "../../../context/WaiterContext";
 import { logEvent } from "../../../utils/logger";
+
+// ─── Ann Sathi Brand Colors ───────────────────────────────────────────────────
+const ANN = {
+  orange: "#fe9a54",
+  red: "#f16b3f",
+  blue: "#456aba",
+  darkBlue: "#2a4795",
+  orangeLight: "#fff4ec",
+  redLight: "#fff0eb",
+  blueLight: "#eef2fb",
+  darkBlueLight: "#e8ecf7",
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 if (
   Platform.OS === "android" &&
@@ -32,16 +45,11 @@ interface WaiterAlert {
 }
 
 export default function WaiterAlertsScreen() {
-  // 🔥 Fetching waiter object along with lastAlertPayload
   const { waiter, lastAlertPayload } = useWaiter();
-
   const [alerts, setAlerts] = useState<WaiterAlert[]>([]);
 
-  // 1. Reactive Alert Generation with Real Table Numbers and Branch Validation
   useEffect(() => {
     if (lastAlertPayload) {
-      // 👇 NEW: Branch Isolation Check
-      // If waiter has a branch_id and it doesn't match the event's branch_id, ignore the alert
       if (
         waiter?.branch_id &&
         lastAlertPayload.branch_id !== waiter.branch_id
@@ -50,7 +58,6 @@ export default function WaiterAlertsScreen() {
       }
 
       setAlerts((prev) => {
-        // Prevent duplicate renders by checking the backend Event ID
         const isDuplicate = prev.some((a) => a.id === lastAlertPayload.eventId);
         if (isDuplicate) return prev;
 
@@ -67,9 +74,8 @@ export default function WaiterAlertsScreen() {
         return [newAlert, ...prev];
       });
     }
-  }, [lastAlertPayload, waiter?.branch_id]); // Dependency updated
+  }, [lastAlertPayload, waiter?.branch_id]);
 
-  // 2. Auto-Refresh Wait Timers
   useEffect(() => {
     const interval = setInterval(() => {
       setAlerts((prev) => [...prev]);
@@ -97,11 +103,13 @@ export default function WaiterAlertsScreen() {
 
     return (
       <View style={[styles.alertCard, isUrgent && styles.alertCardUrgent]}>
-        <View style={styles.alertIconBox}>
+        <View
+          style={[styles.alertIconBox, isUrgent && styles.alertIconBoxUrgent]}
+        >
           <MaterialIcons
             name="notifications-active"
             size={28}
-            color={isUrgent ? WAITER_THEME.danger : WAITER_THEME.warning}
+            color={isUrgent ? ANN.red : ANN.orange}
           />
         </View>
 
@@ -112,30 +120,15 @@ export default function WaiterAlertsScreen() {
           <View
             style={{ flexDirection: "row", alignItems: "center", marginTop: 4 }}
           >
-            <MaterialIcons
-              name="person"
-              size={14}
-              color={WAITER_THEME.primary}
-            />
+            <MaterialIcons name="person" size={14} color={ANN.darkBlue} />
+            <Text style={styles.alertCustomer}>{item.customerName}</Text>
+            <MaterialIcons name="schedule" size={14} color="#64748b" />
             <Text
               style={[
                 styles.alertTime,
-                {
-                  color: WAITER_THEME.textPrimary,
-                  marginLeft: 4,
-                  marginRight: 12,
-                  fontWeight: "600",
-                },
+                isUrgent && { color: ANN.red, fontWeight: "bold" },
               ]}
             >
-              {item.customerName}
-            </Text>
-            <MaterialIcons
-              name="schedule"
-              size={14}
-              color={WAITER_THEME.textSecondary}
-            />
-            <Text style={[styles.alertTime, { marginLeft: 4 }]}>
               {getWaitTime(item.timestamp)}
             </Text>
           </View>
@@ -145,58 +138,85 @@ export default function WaiterAlertsScreen() {
           style={styles.resolveBtn}
           onPress={() => handleResolveAlert(item.id)}
         >
-          <MaterialIcons name="check" size={20} color="#fff" />
+          <MaterialIcons name="check" size={24} color="#fff" />
         </TouchableOpacity>
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Notifications</Text>
-          <Text style={styles.headerSubtitle}>
-            {alerts.length} active alert{alerts.length !== 1 ? "s" : ""}
-          </Text>
-        </View>
-      </View>
+    <View style={styles.mainWrapper}>
+      {/* ─── BACKGROUND IMAGE & GLASS OVERLAY ─── */}
+      <Image
+        source={require("../../../assets/images/bg.png")}
+        style={styles.bgImage}
+      />
+      <View style={styles.bgOverlay} />
 
-      {alerts.length === 0 ? (
-        <View style={styles.emptyState}>
-          <View style={styles.emptyIconCircle}>
-            <MaterialIcons
-              name="notifications-none"
-              size={48}
-              color={WAITER_THEME.textSecondary}
-            />
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerTitle}>Notifications</Text>
+            <Text style={styles.headerSubtitle}>
+              {alerts.length} active alert{alerts.length !== 1 ? "s" : ""}
+            </Text>
           </View>
-          <Text style={styles.emptyTitle}>All Quiet</Text>
-          <Text style={styles.emptySub}>
-            No tables are currently requesting assistance.
-          </Text>
         </View>
-      ) : (
-        <FlatList
-          data={alerts}
-          keyExtractor={(item) => item.id}
-          renderItem={renderAlertItem}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
-    </SafeAreaView>
+
+        {alerts.length === 0 ? (
+          <View style={styles.emptyState}>
+            <View style={styles.emptyIconCircle}>
+              <MaterialIcons
+                name="notifications-none"
+                size={48}
+                color={ANN.darkBlue}
+              />
+            </View>
+            <Text style={styles.emptyTitle}>All Quiet</Text>
+            <Text style={styles.emptySub}>
+              No tables are currently requesting assistance.
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={alerts}
+            keyExtractor={(item) => item.id}
+            renderItem={renderAlertItem}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
+      </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // ── BACKGROUND STYLES ──
+  mainWrapper: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+  },
+  bgImage: {
+    ...StyleSheet.absoluteFillObject,
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+    opacity: 0.15,
+  },
+  bgOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(248, 250, 252, 0.85)", // Glass effect
+  },
+
   container: {
     flex: 1,
-    backgroundColor: WAITER_THEME.backgroundLight,
     maxWidth: 600,
     width: "100%",
     alignSelf: "center",
   },
+
+  // ── HEADER ──
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -204,20 +224,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: Platform.OS === "android" ? 40 : 16,
     paddingBottom: 16,
-    backgroundColor: WAITER_THEME.cardBgLight,
+    backgroundColor: "transparent",
     borderBottomWidth: 1,
-    borderBottomColor: WAITER_THEME.ui.border,
+    borderBottomColor: "rgba(42, 71, 149, 0.1)",
   },
   headerTitle: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: "900",
-    color: WAITER_THEME.textPrimary,
+    color: ANN.darkBlue,
   },
   headerSubtitle: {
     fontSize: 14,
-    color: WAITER_THEME.textSecondary,
+    color: "#64748b",
     marginTop: 2,
+    fontWeight: "600",
   },
+
+  // ── EMPTY STATE ──
   emptyState: {
     flex: 1,
     justifyContent: "center",
@@ -228,34 +251,39 @@ const styles = StyleSheet.create({
     width: 96,
     height: 96,
     borderRadius: 48,
-    backgroundColor: "rgba(0,0,0,0.03)",
+    backgroundColor: ANN.blueLight,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "rgba(42, 71, 149, 0.2)",
   },
   emptyTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: WAITER_THEME.textPrimary,
+    fontSize: 22,
+    fontWeight: "900",
+    color: ANN.darkBlue,
     marginBottom: 8,
   },
   emptySub: {
     fontSize: 15,
-    color: WAITER_THEME.textSecondary,
+    color: "#64748b",
     textAlign: "center",
   },
+
   listContent: { padding: 16, paddingBottom: 100 },
+
+  // ── ALERT CARD (GLASS UI) ──
   alertCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: WAITER_THEME.cardBgLight,
+    backgroundColor: "rgba(255, 255, 255, 0.8)",
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: WAITER_THEME.ui.border,
-    borderLeftWidth: 4,
-    borderLeftColor: WAITER_THEME.warning,
+    borderColor: "rgba(42, 71, 149, 0.15)",
+    borderLeftWidth: 5,
+    borderLeftColor: ANN.orange,
     ...Platform.select({
       web: { boxShadow: "0px 4px 12px rgba(0,0,0,0.04)" } as any,
       default: {
@@ -268,37 +296,57 @@ const styles = StyleSheet.create({
     }),
   },
   alertCardUrgent: {
-    borderLeftColor: WAITER_THEME.danger,
-    backgroundColor: "#FEF2F2",
+    borderLeftColor: ANN.red,
+    backgroundColor: "rgba(255, 240, 235, 0.9)", // Light red/orange tint
+    borderColor: "rgba(241, 107, 63, 0.3)",
   },
+
   alertIconBox: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    backgroundColor: ANN.orangeLight,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 16,
   },
+  alertIconBoxUrgent: {
+    backgroundColor: "rgba(241, 107, 63, 0.15)",
+  },
+
   alertContent: { flex: 1 },
   alertTitle: {
     fontSize: 16,
     fontWeight: "bold",
-    color: WAITER_THEME.textPrimary,
-    marginBottom: 4,
+    color: ANN.darkBlue,
+    marginBottom: 6,
+  },
+  alertCustomer: {
+    color: ANN.darkBlue,
+    marginLeft: 4,
+    marginRight: 12,
+    fontWeight: "700",
+    fontSize: 13,
   },
   alertTime: {
-    fontSize: 13,
-    color: WAITER_THEME.textSecondary,
-    fontWeight: "500",
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "600",
+    marginLeft: 4,
   },
+
   resolveBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: WAITER_THEME.success,
+    backgroundColor: "#10b981", // Success Green
     justifyContent: "center",
     alignItems: "center",
     marginLeft: 12,
+    shadowColor: "#10b981",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 2,
   },
 });

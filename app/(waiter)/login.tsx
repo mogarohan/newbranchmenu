@@ -3,7 +3,7 @@ import { router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
+  Image,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -15,9 +15,24 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { WAITER_THEME } from "../../constants/theme";
 import { useWaiter } from "../../context/WaiterContext";
 import { logEvent } from "../../utils/logger";
+
+// ─── Ann Sathi Brand Colors ───────────────────────────────────────────────────
+const ANN = {
+  orange: "#fe9a54",
+  red: "#f16b3f",
+  blue: "#456aba",
+  darkBlue: "#2a4795",
+  orangeLight: "#fff4ec",
+  redLight: "#fff0eb",
+  blueLight: "#eef2fb",
+  darkBlueLight: "#e8ecf7",
+  textPrimary: "#1e293b",
+  textSecondary: "#64748b",
+  border: "#e2e8f0",
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function WaiterLoginScreen() {
   const [staffId, setStaffId] = useState("");
@@ -25,15 +40,19 @@ export default function WaiterLoginScreen() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // 👇 NEW: State to hold the error message to display on UI
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
   const { login } = useWaiter();
 
   const handleLogin = async () => {
     if (loading) return;
 
     Keyboard.dismiss();
+    setErrorMessage(null); // Clear previous errors
 
     if (!staffId.trim() || !password.trim()) {
-      Alert.alert("Required", "Please enter your Staff ID and Password.");
+      setErrorMessage("Please enter your Waiter ID and Password.");
       return;
     }
 
@@ -44,17 +63,21 @@ export default function WaiterLoginScreen() {
     } catch (error: any) {
       logEvent("WARN", "WAITER_LOGIN_FAILED", error?.message);
 
-      if (error?.status === 401 || error?.status === 404) {
-        Alert.alert("Access Denied", "Invalid Staff ID or Password.");
+      // 👇 UPDATED: Show error message directly on the screen instead of Alert
+      if (
+        error?.status === 401 ||
+        error?.status === 404 ||
+        error?.message?.toLowerCase().includes("invalid") ||
+        error?.message?.toLowerCase().includes("credential")
+      ) {
+        setErrorMessage("Invalid username and password.");
       } else if (error?.status === 429) {
-        Alert.alert(
-          "Too Many Attempts",
-          "Please wait a minute before trying again.",
+        setErrorMessage(
+          "Too Many Attempts. Please wait a minute before trying again.",
         );
       } else {
-        Alert.alert(
-          "Connection Error",
-          "Could not reach the server. Please check your internet.",
+        setErrorMessage(
+          "Connection Error. Could not reach the server. Please check your internet.",
         );
       }
     } finally {
@@ -68,12 +91,12 @@ export default function WaiterLoginScreen() {
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
       >
-        {/* 🔥 FIX: Removed TouchableWithoutFeedback and added keyboardShouldPersistTaps */}
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           bounces={false}
           keyboardShouldPersistTaps="handled"
         >
+          {/* ── Back Button ── */}
           <TouchableOpacity
             style={[
               styles.backBtn,
@@ -81,43 +104,43 @@ export default function WaiterLoginScreen() {
             ]}
             onPress={() => router.replace("/")}
           >
-            <MaterialIcons
-              name="arrow-back"
-              size={24}
-              color="rgba(255,255,255,0.7)"
-            />
+            <MaterialIcons name="arrow-back" size={24} color={ANN.darkBlue} />
           </TouchableOpacity>
 
+          {/* ── Logo & Title ── */}
           <View style={styles.headerContainer}>
             <View style={styles.logoWrapper}>
-              <MaterialIcons
-                name="restaurant"
-                size={48}
-                color={WAITER_THEME.primary}
+              <Image
+                source={require("../../assets/images/ann-sathi.png")}
+                style={styles.logoImage}
               />
             </View>
-            <Text style={styles.title}>Staff Portal</Text>
+            <Text style={styles.title}>Waiter Login</Text>
             <Text style={styles.subtitle}>
               Sign in to manage orders and tables
             </Text>
           </View>
 
+          {/* ── Login Form ── */}
           <View style={styles.formContainer}>
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Staff ID</Text>
+              <Text style={styles.label}>Waiter ID</Text>
               <View style={styles.inputWrapper}>
                 <MaterialIcons
-                  name="badge"
+                  name="person-outline"
                   size={20}
-                  color="rgba(255,255,255,0.4)"
+                  color={ANN.darkBlue}
                   style={styles.inputIcon}
                 />
                 <TextInput
                   style={styles.input}
                   placeholder="Enter your ID"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  placeholderTextColor={ANN.textSecondary}
                   value={staffId}
-                  onChangeText={setStaffId}
+                  onChangeText={(text) => {
+                    setStaffId(text);
+                    setErrorMessage(null); // Clear error on typing
+                  }}
                   autoCapitalize="none"
                   keyboardType="default"
                   returnKeyType="next"
@@ -133,23 +156,26 @@ export default function WaiterLoginScreen() {
                     Platform.OS === "web" ? ({ cursor: "pointer" } as any) : {}
                   }
                 >
-                  <Text style={styles.forgotText}>Forgot ID/Password?</Text>
+                  <Text style={styles.forgotText}>Forgot Password?</Text>
                 </TouchableOpacity>
               </View>
               <View style={styles.inputWrapper}>
                 <MaterialIcons
-                  name="lock"
+                  name="lock-outline"
                   size={20}
-                  color="rgba(255,255,255,0.4)"
+                  color={ANN.darkBlue}
                   style={styles.inputIcon}
                 />
                 <TextInput
                   style={styles.input}
                   placeholder="••••••••"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  placeholderTextColor={ANN.textSecondary}
                   secureTextEntry={!showPassword}
                   value={password}
-                  onChangeText={setPassword}
+                  onChangeText={(text) => {
+                    setPassword(text);
+                    setErrorMessage(null); // Clear error on typing
+                  }}
                   onSubmitEditing={handleLogin}
                   returnKeyType="done"
                 />
@@ -163,12 +189,21 @@ export default function WaiterLoginScreen() {
                   <MaterialIcons
                     name={showPassword ? "visibility-off" : "visibility"}
                     size={20}
-                    color="rgba(255,255,255,0.4)"
+                    color={ANN.textSecondary}
                   />
                 </TouchableOpacity>
               </View>
             </View>
 
+            {/* 👇 NEW: Display Error Message on Screen 👇 */}
+            {errorMessage ? (
+              <View style={styles.errorContainer}>
+                <MaterialIcons name="error-outline" size={18} color={ANN.red} />
+                <Text style={styles.errorText}>{errorMessage}</Text>
+              </View>
+            ) : null}
+
+            {/* ── Login Button ── */}
             <TouchableOpacity
               style={[
                 styles.loginBtn,
@@ -189,6 +224,7 @@ export default function WaiterLoginScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* ── Footer ── */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>Having trouble logging in?</Text>
             <TouchableOpacity
@@ -206,7 +242,10 @@ export default function WaiterLoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: WAITER_THEME.backgroundDark },
+  container: {
+    flex: 1,
+    backgroundColor: "#ffffff", // Light background
+  },
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 24,
@@ -219,35 +258,52 @@ const styles = StyleSheet.create({
   backBtn: {
     position: "absolute",
     top: Platform.OS === "android" ? 40 : 10,
-    left: 24,
+    left: 16,
     zIndex: 10,
     padding: 8,
-  },
-  headerContainer: { alignItems: "center", marginBottom: 40, marginTop: 40 },
-  logoWrapper: {
-    width: 80,
-    height: 80,
+    backgroundColor: ANN.blueLight,
     borderRadius: 20,
-    backgroundColor: "rgba(255, 105, 51, 0.1)",
+  },
+  headerContainer: {
+    alignItems: "center",
+    marginBottom: 40,
+    marginTop: 60,
+  },
+  logoWrapper: {
+    width: 120, // साइज़ थोड़ा बड़ा किया ताकि लोगो साफ़ दिखे
+    height: 120,
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255, 105, 51, 0.2)",
   },
+  logoImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "contain", // इससे इमेज बिना कटे पूरी दिखेगी
+  },
+
   title: {
     fontSize: 28,
-    fontWeight: "bold",
-    color: "#ffffff",
+    fontWeight: "900",
+    color: ANN.darkBlue,
     marginBottom: 8,
+    letterSpacing: 0.5,
   },
-  subtitle: { fontSize: 15, color: "rgba(255,255,255,0.6)" },
-  formContainer: { gap: 20 },
-  inputGroup: { gap: 8 },
+  subtitle: {
+    fontSize: 15,
+    color: ANN.textSecondary,
+    fontWeight: "500",
+  },
+  formContainer: {
+    gap: 20,
+  },
+  inputGroup: {
+    gap: 8,
+  },
   label: {
     fontSize: 14,
-    fontWeight: "600",
-    color: "rgba(255,255,255,0.9)",
+    fontWeight: "700",
+    color: ANN.darkBlue,
     marginLeft: 4,
   },
   passwordHeader: {
@@ -256,26 +312,57 @@ const styles = StyleSheet.create({
     alignItems: "center",
     paddingHorizontal: 4,
   },
-  forgotText: { fontSize: 12, fontWeight: "600", color: WAITER_THEME.primary },
+  forgotText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: ANN.red,
+  },
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.05)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    backgroundColor: "#f8fafc",
+    borderWidth: 1.5,
+    borderColor: ANN.border,
     borderRadius: 12,
     height: 56,
   },
-  inputIcon: { paddingHorizontal: 16 },
+  inputIcon: {
+    paddingHorizontal: 16,
+  },
   input: {
     flex: 1,
     fontSize: 16,
-    color: "#ffffff",
+    color: ANN.textPrimary,
+    fontWeight: "500",
     ...((Platform.OS === "web" ? { outlineStyle: "none" } : {}) as any),
   },
-  eyeBtn: { paddingHorizontal: 16, height: "100%", justifyContent: "center" },
+  eyeBtn: {
+    paddingHorizontal: 16,
+    height: "100%",
+    justifyContent: "center",
+  },
+
+  // 👇 NEW: Error Message Styles 👇
+  errorContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: ANN.redLight,
+    borderWidth: 1,
+    borderColor: "rgba(241, 107, 63, 0.4)",
+    padding: 12,
+    borderRadius: 10,
+    marginTop: -8,
+  },
+  errorText: {
+    color: ANN.red,
+    fontSize: 14,
+    fontWeight: "bold",
+    marginLeft: 8,
+    flex: 1,
+  },
+
   loginBtn: {
-    backgroundColor: WAITER_THEME.primary,
+    backgroundColor: ANN.darkBlue,
     height: 56,
     borderRadius: 12,
     flexDirection: "row",
@@ -283,19 +370,31 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
     marginTop: 8,
-    shadowColor: WAITER_THEME.primary,
+    shadowColor: ANN.darkBlue,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 4,
   },
   loginBtnText: {
     color: "#fff",
     fontSize: 16,
-    fontWeight: "bold",
-    letterSpacing: 0.5,
+    fontWeight: "900",
+    letterSpacing: 1,
   },
-  footer: { marginTop: 40, alignItems: "center", gap: 6 },
-  footerText: { fontSize: 14, color: "rgba(255,255,255,0.5)" },
-  footerLink: { fontSize: 14, fontWeight: "600", color: WAITER_THEME.primary },
+  footer: {
+    marginTop: 40,
+    alignItems: "center",
+    gap: 6,
+  },
+  footerText: {
+    fontSize: 14,
+    color: ANN.textSecondary,
+    fontWeight: "500",
+  },
+  footerLink: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: ANN.darkBlue,
+  },
 });
