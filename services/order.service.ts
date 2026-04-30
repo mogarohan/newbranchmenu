@@ -26,11 +26,27 @@ export const OrderService = {
       }),
     });
   },
+
   // Add 'signal?: AbortSignal' to the parameters, and pass it in the options
   getOrders: async (sessionToken: string, signal?: AbortSignal) => {
     return apiCall(`/orders/session/${sessionToken}`, {
       method: "GET",
       signal: signal,
     });
+  },
+
+  // 👇 MOVED INSIDE THE OrderService OBJECT 👇
+  cancelOrder: async (sessionToken: string, orderId: string | number) => {
+    try {
+      const response = await apiCall(`/orders/${orderId}/cancel`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+        },
+      });
+      return response;
+    } catch (error: any) {
+      throw new Error(error.message || "Failed to cancel order");
+    }
   },
 };
