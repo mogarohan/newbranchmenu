@@ -265,6 +265,7 @@ export default function MenuScreen() {
     return categories
       .map((cat: any) => {
         if (cat.is_active === false || cat.is_active === 0) return null;
+
         const filteredItems = (cat.items || []).filter((item: any) => {
           if (item.is_available === false || item.is_available === 0)
             return false;
@@ -284,6 +285,14 @@ export default function MenuScreen() {
           }
           return true;
         });
+
+        // Add sorting: lowest price to highest price
+        filteredItems.sort((a: any, b: any) => {
+          const priceA = parseFloat(a.price) || 0;
+          const priceB = parseFloat(b.price) || 0;
+          return priceA - priceB;
+        });
+
         return { ...cat, items: filteredItems };
       })
       .filter((cat: any) => cat && cat.items.length > 0);
