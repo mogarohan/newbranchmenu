@@ -260,6 +260,21 @@ export default function MenuScreen() {
 
   const categories = menuData?.categories || FALLBACK_CATEGORIES;
 
+  // 👇 NEW: Check if there are ANY non-veg items in the entire menu
+  const hasNonVegItems = useMemo(() => {
+    return categories.some((cat: any) => {
+      if (!cat.items) return false;
+      return cat.items.some((item: any) => {
+        const type = item.type
+          ? String(item.type).toLowerCase()
+          : item.is_veg === false
+            ? "non-veg"
+            : "veg";
+        return type === "non-veg";
+      });
+    });
+  }, [categories]);
+
   const processedCategories = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
     return categories
@@ -269,11 +284,14 @@ export default function MenuScreen() {
         const filteredItems = (cat.items || []).filter((item: any) => {
           if (item.is_available === false || item.is_available === 0)
             return false;
+
+          // Fixed the ternary condition here
           const safeType = item.type
             ? String(item.type).toLowerCase()
-            : item.is_veg
-              ? "veg"
+            : item.is_veg === false
+              ? "non-veg"
               : "veg";
+
           if (dietaryFilter !== "all" && safeType !== dietaryFilter)
             return false;
           if (query) {
@@ -322,10 +340,11 @@ export default function MenuScreen() {
     const currentQty = cart[item.id]?.qty || 0;
     const itemPrice = parseFloat(item.price) || 0;
 
+    // Fixed the ternary condition here as well
     const safeType = item.type
       ? String(item.type).toLowerCase()
-      : item.is_veg
-        ? "veg"
+      : item.is_veg === false
+        ? "non-veg"
         : "veg";
 
     return (
@@ -580,63 +599,65 @@ export default function MenuScreen() {
               )}
             </View>
 
-            {/* ── Dietary Filter ── */}
-            <View style={styles.dietaryFilterContainer}>
-              <TouchableOpacity
-                style={[
-                  styles.dietFilterBtn,
-                  dietaryFilter === "all" && styles.dietFilterBtnActive,
-                ]}
-                onPress={() => setDietaryFilter("all")}
-              >
-                <Text
+            {/* ── Dietary Filter (Conditionally Rendered) ── */}
+            {hasNonVegItems && (
+              <View style={styles.dietaryFilterContainer}>
+                <TouchableOpacity
                   style={[
-                    styles.dietFilterText,
-                    dietaryFilter === "all" && styles.dietFilterTextActive,
+                    styles.dietFilterBtn,
+                    dietaryFilter === "all" && styles.dietFilterBtnActive,
                   ]}
+                  onPress={() => setDietaryFilter("all")}
                 >
-                  All Items
-                </Text>
-              </TouchableOpacity>
+                  <Text
+                    style={[
+                      styles.dietFilterText,
+                      dietaryFilter === "all" && styles.dietFilterTextActive,
+                    ]}
+                  >
+                    All Items
+                  </Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[
-                  styles.dietFilterBtn,
-                  dietaryFilter === "veg" && styles.dietFilterBtnActiveVeg,
-                ]}
-                onPress={() => setDietaryFilter("veg")}
-              >
-                <View style={styles.vegDot} />
-                <Text
+                <TouchableOpacity
                   style={[
-                    styles.dietFilterText,
-                    dietaryFilter === "veg" && styles.dietFilterTextActiveVeg,
+                    styles.dietFilterBtn,
+                    dietaryFilter === "veg" && styles.dietFilterBtnActiveVeg,
                   ]}
+                  onPress={() => setDietaryFilter("veg")}
                 >
-                  Veg Only
-                </Text>
-              </TouchableOpacity>
+                  <View style={styles.vegDot} />
+                  <Text
+                    style={[
+                      styles.dietFilterText,
+                      dietaryFilter === "veg" && styles.dietFilterTextActiveVeg,
+                    ]}
+                  >
+                    Veg Only
+                  </Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[
-                  styles.dietFilterBtn,
-                  dietaryFilter === "non-veg" &&
-                    styles.dietFilterBtnActiveNonVeg,
-                ]}
-                onPress={() => setDietaryFilter("non-veg")}
-              >
-                <View style={styles.nonVegTriangle} />
-                <Text
+                <TouchableOpacity
                   style={[
-                    styles.dietFilterText,
+                    styles.dietFilterBtn,
                     dietaryFilter === "non-veg" &&
-                      styles.dietFilterTextActiveNonVeg,
+                      styles.dietFilterBtnActiveNonVeg,
                   ]}
+                  onPress={() => setDietaryFilter("non-veg")}
                 >
-                  Non-Veg
-                </Text>
-              </TouchableOpacity>
-            </View>
+                  <View style={styles.nonVegTriangle} />
+                  <Text
+                    style={[
+                      styles.dietFilterText,
+                      dietaryFilter === "non-veg" &&
+                        styles.dietFilterTextActiveNonVeg,
+                    ]}
+                  >
+                    Non-Veg
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* ── CATEGORY SLIDER (PILLS) ORANGE/BLUE ── */}
             {searchQuery.trim().length === 0 && (

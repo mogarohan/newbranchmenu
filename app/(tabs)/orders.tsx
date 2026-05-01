@@ -30,6 +30,11 @@ export default function OrdersTab() {
     "connecting" | "live" | "offline"
   >("connecting");
 
+  // 👇 NEW: State to track which order is currently being cancelled
+  const [cancellingId, setCancellingId] = useState<string | number | null>(
+    null,
+  );
+
   const echoRef = useRef<any>(null);
   const processedEventsRef = useRef<Set<string>>(new Set());
 
@@ -147,7 +152,7 @@ export default function OrdersTab() {
         }
         if (event.order) {
           mergeOrders([event.order]);
-          // 👇 Trigger a silent background fetch to grab the full items array
+          // Trigger a silent background fetch to grab the full items array
           fetchOrders();
         }
       })
@@ -192,6 +197,53 @@ export default function OrdersTab() {
       if (Platform.OS === "web")
         window.alert("Could not reach staff. Please try again.");
       else Alert.alert("Error", "Could not reach staff. Please try again.");
+    }
+  };
+
+  // 👇 NEW: Handle Order Cancellation logic 👇
+  const executeCancel = async (orderId: string | number) => {
+    if (!sessionToken) return;
+    try {
+      setCancellingId(orderId);
+      await OrderService.cancelOrder(sessionToken, orderId);
+
+      if (Platform.OS === "web") {
+        window.alert("Order has been cancelled.");
+      } else {
+        Alert.alert("Success", "Order has been cancelled.");
+      }
+
+      fetchOrders(); // Refresh the list instantly
+    } catch (error: any) {
+      const msg =
+        error.message ||
+        "The kitchen has already started preparing this order.";
+      if (Platform.OS === "web") window.alert(msg);
+      else Alert.alert("Cannot Cancel", msg);
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const handleCancelOrder = (orderId: string | number) => {
+    if (Platform.OS === "web") {
+      const confirmed = window.confirm(
+        "Are you sure you want to cancel this order? This cannot be undone.",
+      );
+      if (confirmed) executeCancel(orderId);
+    } else {
+      Alert.alert(
+        "Cancel Order?",
+        "Are you sure you want to cancel this order? This cannot be undone.",
+        [
+          { text: "No, keep it", style: "cancel" },
+          {
+            text: "Yes, Cancel",
+            style: "destructive",
+            onPress: () => executeCancel(orderId),
+          },
+        ],
+      );
     }
   };
 
@@ -255,16 +307,20 @@ export default function OrdersTab() {
     index: number;
   }) => {
     const statusUI = getStatusUI(order.status);
+    const orderStatus = order.status?.toLowerCase() || "";
+
     const isCancelled =
-      order.status?.toLowerCase() === "cancelled" ||
-      order.status?.toLowerCase() === "rejected";
+      orderStatus === "cancelled" || orderStatus === "rejected";
+
+    // 👇 NEW: Check if pending or preparing for button visibility
+    const isPending = orderStatus === "pending" || orderStatus === "placed";
+    const isPreparing = orderStatus === "preparing";
 
     const displayTotal = isCancelled
       ? 0
       : parseFloat(String(order.total_amount)) || 0;
 
-    // 👇 FIX: Calculate sequential display number (Oldest is #1)
-    // Since displayOrders is sorted newest first, we subtract the index from the total length.
+    // Calculate sequential display number (Oldest is #1)
     const displayOrderNumber = displayOrders.length - index;
 
     return (
@@ -285,7 +341,6 @@ export default function OrdersTab() {
                 },
               ]}
             >
-              {/* 👇 Output the calculated display number instead of order.id 👇 */}
               Order #{displayOrderNumber}
             </Text>
             <Text style={styles.orderTime}>
@@ -387,6 +442,36 @@ export default function OrdersTab() {
             {displayTotal.toFixed(2)}
           </Text>
         </View>
+
+        {/* 👇 NEW: Cancel Button UI 👇 */}
+        {isPending && (
+          <TouchableOpacity
+            style={styles.cancelBtn}
+            onPress={() => handleCancelOrder(order.id)}
+            disabled={cancellingId === order.id}
+          >
+            {cancellingId === order.id ? (
+              <ActivityIndicator color={THEME.danger} size="small" />
+            ) : (
+              <Text style={styles.cancelBtnText}>Cancel Order</Text>
+            )}
+          </TouchableOpacity>
+        )}
+
+        {/* 👇 NEW: Preparing Warning Message 👇 */}
+        {isPreparing && (
+          <View style={styles.preparingWarningBox}>
+            <Ionicons
+              name="information-circle-outline"
+              size={16}
+              color={THEME.warning}
+            />
+            <Text style={styles.preparingWarningText}>
+              The kitchen is currently preparing this order. To cancel or return
+              an item, please call the waiter.
+            </Text>
+          </View>
+        )}
       </View>
     );
   };
@@ -658,6 +743,38 @@ const styles = StyleSheet.create({
     borderTopColor: THEME.border,
   },
   totalText: { fontSize: 16, fontWeight: "bold", color: THEME.textPrimary },
+
+  // 👇 NEW: Cancel Button Styles 👇
+  cancelBtn: {
+    marginTop: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: THEME.danger,
+    alignItems: "center",
+    backgroundColor: THEME.cardBg,
+  },
+  cancelBtnText: {
+    color: THEME.danger,
+    fontWeight: "bold",
+    fontSize: 14,
+  },
+  preparingWarningBox: {
+    flexDirection: "row",
+    marginTop: 16,
+    padding: 10,
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  preparingWarningText: {
+    color: THEME.warning,
+    fontSize: 12,
+    marginLeft: 6,
+    flex: 1,
+    fontStyle: "italic",
+  },
+
   emptyState: {
     flex: 1,
     justifyContent: "center",
