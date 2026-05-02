@@ -94,8 +94,18 @@ export default function OrdersTab() {
 
   useEffect(() => {
     const abortController = new AbortController();
-    fetchOrders(abortController.signal);
-    return () => abortController.abort();
+
+    // Only pass the signal if we strictly need to cancel this specific fetch
+    fetchOrders(abortController.signal).catch((err) => {
+      // Silently catch abort errors so they don't bubble up and crash other screens
+      if (err.name === "AbortError") return;
+      console.error(err);
+    });
+
+    return () => {
+      // Abort the fetch if the user navigates away before it finishes
+      abortController.abort();
+    };
   }, [fetchOrders]);
 
   const onRefresh = () => {

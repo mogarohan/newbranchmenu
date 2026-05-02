@@ -279,8 +279,10 @@ export default function BillsTab() {
     paymentData?.amount || finalSubtotal - finalDiscount + finalTax || 0,
   );
 
+  // 👇 ADDED ADDRESS EXTRACTION HERE 👇
   const restaurantName = menuData?.restaurant?.name || "Restaurant Bill";
   const restaurantLogo = menuData?.restaurant?.logo || null;
+  const restaurantAddress = menuData?.restaurant?.address || "";
   const tableNum = menuData?.table?.number || tableData?.tId || "-";
   const displayHostName = isPrimary
     ? customerName
@@ -324,19 +326,33 @@ export default function BillsTab() {
       `;
     });
 
+    // 👇 UPDATED HTML TEMPLATE FOR LOGO & ADDRESS 👇
     const receiptHTML = `
       <div style="padding: 30px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #111827; background: #ffffff; max-width: 500px; margin: auto;">
         
         ${
           restaurantLogo
-            ? `<div style="text-align: center; margin-bottom: 12px;">
-                 <img src="${restaurantLogo}" alt="Restaurant Logo" style="max-height: 60px; max-width: 150px; object-fit: contain; border-radius: 8px;" />
+            ? `<div style="text-align: center; margin-bottom: 16px;">
+                 <img src="${restaurantLogo}" alt="Restaurant Logo" style="max-height: 80px; max-width: 180px; object-fit: contain; border-radius: 8px;" />
                </div>`
             : ""
         }
 
-        <div style="text-align: center; font-size: 24px; font-weight: 900; color: #111827; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px;">${restaurantName}</div>
-        <div style="text-align: center; font-size: 12px; color: #6b7280; margin-bottom: 30px;">${dateStr}</div>
+        <div style="text-align: center; font-size: 26px; font-weight: 900; color: #111827; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px;">
+          ${restaurantName}
+        </div>
+        
+        ${
+          restaurantAddress
+            ? `<div style="text-align: center; font-size: 13px; color: #4b5563; margin-bottom: 8px; line-height: 1.4; padding-left: 20px; padding-right: 20px;">
+                 ${restaurantAddress}
+               </div>`
+            : ""
+        }
+
+        <div style="text-align: center; font-size: 12px; color: #6b7280; margin-bottom: 30px;">
+          ${dateStr}
+        </div>
 
         <div style="background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 24px;">
           <div style="text-align: center; font-size: 22px; font-weight: 900; margin-bottom: 4px;">TABLE ${tableNum}</div>

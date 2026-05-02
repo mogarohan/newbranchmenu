@@ -96,7 +96,10 @@ export default function CartTab() {
       setOrderNote("");
       setPendingKey(null);
 
-      router.push("/(tabs)/orders");
+      // 👇 THE FIX: Allow React state to settle before unmounting the screen
+      setTimeout(() => {
+        router.push("/(tabs)/orders");
+      }, 100);
     } catch (err: any) {
       console.error("Order error:", err);
 
