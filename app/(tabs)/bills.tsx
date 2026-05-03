@@ -272,14 +272,17 @@ export default function BillsTab() {
     };
   }, [validOrders]);
 
+  // 👇 ADDED: Extra Charges parsing & calculation
   const finalSubtotal = parseFloat(paymentData?.subtotal || rawSubtotal || 0);
   const finalDiscount = parseFloat(paymentData?.discount_amount || 0);
   const finalTax = parseFloat(paymentData?.tax_amount || 0);
+  const finalExtraCharges = parseFloat(paymentData?.extra_charges || 0);
   const finalGrandTotal = parseFloat(
-    paymentData?.amount || finalSubtotal - finalDiscount + finalTax || 0,
+    paymentData?.amount ||
+      finalSubtotal - finalDiscount + finalTax + finalExtraCharges ||
+      0,
   );
 
-  // 👇 ADDED ADDRESS EXTRACTION HERE 👇
   const restaurantName = menuData?.restaurant?.name || "Restaurant Bill";
   const restaurantLogo = menuData?.restaurant?.logo || null;
   const restaurantAddress = menuData?.restaurant?.address || "";
@@ -288,7 +291,6 @@ export default function BillsTab() {
     ? customerName
     : menuData?.session?.host_name || "Customer";
 
-  // 👇 PRODUCTION-GRADE UPI STRING GENERATION 👇
   const upiId = paymentData?.upi_id || menuData?.restaurant?.upi_id || "";
 
   const pa = encodeURIComponent(upiId);
@@ -326,7 +328,7 @@ export default function BillsTab() {
       `;
     });
 
-    // 👇 UPDATED HTML TEMPLATE FOR LOGO & ADDRESS 👇
+    // 👇 ADDED: Extra Charges rendering in PDF Receipt 👇
     const receiptHTML = `
       <div style="padding: 30px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #111827; background: #ffffff; max-width: 500px; margin: auto;">
         
@@ -394,6 +396,16 @@ export default function BillsTab() {
             <div style="display: flex; justify-content: space-between; font-size: 14px; color: #dc2626; margin-bottom: 8px;">
               <span>Tax:</span>
               <span style="font-weight: 700;">+ ${currency}${finalTax.toFixed(2)}</span>
+            </div>`
+                : ""
+            }
+
+            ${
+              finalExtraCharges > 0
+                ? `
+            <div style="display: flex; justify-content: space-between; font-size: 14px; color: #111827; margin-bottom: 8px;">
+              <span>Extra Charges:</span>
+              <span style="font-weight: 700;">+ ${currency}${finalExtraCharges.toFixed(2)}</span>
             </div>`
                 : ""
             }
@@ -717,12 +729,24 @@ export default function BillsTab() {
                   </View>
                 )}
 
+                {/* 👇 UPDATED: Changed label from 'Tax & Charges' to 'Tax' */}
                 {finalTax > 0 && (
                   <View style={styles.breakdownRow}>
-                    <Text style={styles.breakdownLabel}>Tax & Charges</Text>
+                    <Text style={styles.breakdownLabel}>Tax</Text>
                     <Text style={styles.breakdownValue}>
                       +{currency}
                       {finalTax.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+
+                {/* 👇 ADDED: Extra Charges row in UI 👇 */}
+                {finalExtraCharges > 0 && (
+                  <View style={styles.breakdownRow}>
+                    <Text style={styles.breakdownLabel}>Extra Charges</Text>
+                    <Text style={styles.breakdownValue}>
+                      +{currency}
+                      {finalExtraCharges.toFixed(2)}
                     </Text>
                   </View>
                 )}
