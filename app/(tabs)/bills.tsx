@@ -30,7 +30,6 @@ import { initEcho } from "../../services/echo";
 import { OrderService } from "../../services/order.service";
 import { SessionService } from "../../services/session.service";
 
-// ─── Ann Sathi Brand Colors ───────────────────────────────────────────────────
 const ANN = {
   orange: "#fe9a54",
   red: "#f16b3f",
@@ -41,7 +40,6 @@ const ANN = {
   blueLight: "#eef2fb",
   darkBlueLight: "#e8ecf7",
 };
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function BillsTab() {
   const {
@@ -63,6 +61,8 @@ export default function BillsTab() {
     "connecting" | "live" | "offline"
   >("connecting");
   const [paymentData, setPaymentData] = useState<any>(null);
+
+  const [billingSummary, setBillingSummary] = useState<any>(null);
 
   const echoRef = useRef<any>(null);
   const processedEventsRef = useRef<Set<string>>(new Set());
@@ -104,6 +104,8 @@ export default function BillsTab() {
         const incomingOrders = Array.isArray(data) ? data : data.orders || [];
         mergeOrders(incomingOrders);
         if (data.payment) setPaymentData(data.payment);
+
+        if (data.billing_summary) setBillingSummary(data.billing_summary);
       } catch (e: any) {
         if (e.name !== "AbortError") console.error("Failed to fetch orders", e);
       } finally {
@@ -206,7 +208,6 @@ export default function BillsTab() {
   }, [orders]);
 
   const isBillPaid = paymentData?.status === "paid";
-  const isBillPending = paymentData?.status === "pending";
 
   useEffect(() => {
     if (isBillPaid && echoRef.current && sessionId) {
@@ -222,13 +223,11 @@ export default function BillsTab() {
 
   const handleSelectMethod = async (method: "cash" | "upi" | "pending") => {
     if (!sessionToken) return;
-    // Optimistic UI update
     setPaymentData((prev: any) => ({ ...prev, payment_method: method }));
     try {
       await SessionService.selectPaymentMethod(sessionToken, method);
     } catch (e) {
       Alert.alert("Error", "Could not select payment method.");
-      // Revert on fail
       fetchOrders();
     }
   };
@@ -272,16 +271,18 @@ export default function BillsTab() {
     };
   }, [validOrders]);
 
-  // 👇 ADDED: Extra Charges parsing & calculation
+  // 👇 UI CALCULATIONS - Using exact PaymentData values for the breakdown 👇
   const finalSubtotal = parseFloat(paymentData?.subtotal || rawSubtotal || 0);
   const finalDiscount = parseFloat(paymentData?.discount_amount || 0);
   const finalTax = parseFloat(paymentData?.tax_amount || 0);
   const finalExtraCharges = parseFloat(paymentData?.extra_charges || 0);
-  const finalGrandTotal = parseFloat(
-    paymentData?.amount ||
-      finalSubtotal - finalDiscount + finalTax + finalExtraCharges ||
-      0,
-  );
+
+  // Use pure math so React state doesn't desync with the UI
+  const calculatedGrandTotal =
+    finalSubtotal - finalDiscount + finalTax + finalExtraCharges;
+
+  const amountPaid = parseFloat(billingSummary?.amount_paid || 0);
+  const amountDue = isBillPaid ? 0 : parseFloat(paymentData?.amount || 0);
 
   const restaurantName = menuData?.restaurant?.name || "Restaurant Bill";
   const restaurantLogo = menuData?.restaurant?.logo || null;
@@ -300,12 +301,12 @@ export default function BillsTab() {
     paymentData?.transaction_reference || `TXN${Date.now()}`,
   );
   const mc = encodeURIComponent(paymentData?.merchant_category_code || "5812");
-  const am = finalGrandTotal.toFixed(2);
+  const am = amountDue.toFixed(2);
   const cu = "INR";
   const upiString = `upi://pay?pa=${pa}&pn=${pn}&tr=${tr}&tn=${tn}&mc=${mc}&am=${am}&cu=${cu}`;
 
   const handleDownloadBill = async () => {
-    if (!isBillPaid) return;
+    if (!isBillPaid && amountDue > 0) return;
     setIsDownloading(true);
 
     const dateStr = new Date().toLocaleString();
@@ -328,7 +329,6 @@ export default function BillsTab() {
       `;
     });
 
-    // 👇 ADDED: Extra Charges rendering in PDF Receipt 👇
     const receiptHTML = `
       <div style="padding: 30px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #111827; background: #ffffff; max-width: 500px; margin: auto;">
         
@@ -410,10 +410,24 @@ export default function BillsTab() {
                 : ""
             }
 
-            <div style="display: flex; justify-content: space-between; font-size: 20px; font-weight: 900; color: #111827; margin-top: 16px; padding-top: 12px; border-top: 1px dashed #d1d5db;">
+            <div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: 900; color: #111827; margin-top: 16px; padding-top: 12px; border-top: 1px dashed #d1d5db;">
               <span>GRAND TOTAL</span>
-              <span>${currency}${finalGrandTotal.toFixed(2)}</span>
+              <span>${currency}${calculatedGrandTotal.toFixed(2)}</span>
             </div>
+            
+            ${
+              amountPaid > 0
+                ? `
+            <div style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 700; color: #059669; margin-top: 8px;">
+              <span>Already Paid</span>
+              <span>- ${currency}${amountPaid.toFixed(2)}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: 900; color: #dc2626; margin-top: 8px;">
+              <span>AMOUNT DUE</span>
+              <span>${currency}${amountDue.toFixed(2)}</span>
+            </div>`
+                : ""
+            }
           </div>
         </div>
 
@@ -465,11 +479,10 @@ export default function BillsTab() {
     }
   };
 
-  const activeMethod = paymentData?.payment_method || "upi"; // Default to UPI for UI if pending
+  const activeMethod = paymentData?.payment_method || "upi";
 
   return (
     <View style={styles.mainWrapper}>
-      {/* ─── BACKGROUND IMAGE & GLASS OVERLAY ─── */}
       <Image
         source={require("../../assets/images/bg.png")}
         style={styles.bgImage}
@@ -477,7 +490,6 @@ export default function BillsTab() {
       <View style={styles.bgOverlay} />
 
       <SafeAreaView style={styles.container}>
-        {/* ── HEADER ── */}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.iconBtn}
@@ -506,7 +518,8 @@ export default function BillsTab() {
             />
           }
         >
-          {loading && !paymentData ? (
+          {/* 👇 FIX: Show empty state if paymentData is missing entirely */}
+          {loading && !paymentData && !billingSummary ? (
             <View style={styles.emptyState}>
               <ActivityIndicator size="large" color={ANN.orange} />
               <Text style={styles.emptyStateText}>Loading bill details...</Text>
@@ -542,17 +555,15 @@ export default function BillsTab() {
             </View>
           ) : (
             <>
-              {/* ── PAGE TITLE SECTION ── */}
               <View style={styles.pageTitleContainer}>
                 <Text style={styles.pageTitle}>Final Summary</Text>
                 <Text style={styles.pageSubtitle}>
-                  {isBillPaid
-                    ? "Your payment was successful. Thank you!"
+                  {isBillPaid || amountDue === 0
+                    ? "Your payment is complete. Thank you!"
                     : "Review your order and select a payment method"}
                 </Text>
               </View>
 
-              {/* ── CARD 1: ORDER ITEMS ── */}
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <Text style={styles.cardTitle}>Order Items</Text>
@@ -616,8 +627,7 @@ export default function BillsTab() {
                 </View>
               </View>
 
-              {/* ── CARD 2: PAYMENT METHOD (Only if not paid) ── */}
-              {!isBillPaid && (
+              {!isBillPaid && amountDue > 0 && paymentData && (
                 <View style={styles.card}>
                   <Text style={styles.cardTitle}>Payment Method</Text>
 
@@ -675,7 +685,6 @@ export default function BillsTab() {
                     </TouchableOpacity>
                   </View>
 
-                  {/* QR Code Display if UPI is selected */}
                   {activeMethod === "upi" && (
                     <View style={styles.qrDisplayBox}>
                       <View style={styles.qrInner}>
@@ -705,7 +714,6 @@ export default function BillsTab() {
                 </View>
               )}
 
-              {/* ── CARD 3: BILL BREAKDOWN ── */}
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Bill Breakdown</Text>
 
@@ -729,7 +737,6 @@ export default function BillsTab() {
                   </View>
                 )}
 
-                {/* 👇 UPDATED: Changed label from 'Tax & Charges' to 'Tax' */}
                 {finalTax > 0 && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Tax</Text>
@@ -740,7 +747,6 @@ export default function BillsTab() {
                   </View>
                 )}
 
-                {/* 👇 ADDED: Extra Charges row in UI 👇 */}
                 {finalExtraCharges > 0 && (
                   <View style={styles.breakdownRow}>
                     <Text style={styles.breakdownLabel}>Extra Charges</Text>
@@ -762,12 +768,51 @@ export default function BillsTab() {
                   </View>
                   <Text style={styles.grandTotalValue}>
                     {currency}
-                    {finalGrandTotal.toFixed(2)}
+                    {calculatedGrandTotal.toFixed(2)}
                   </Text>
                 </View>
 
-                {/* ── MAIN ACTION BUTTON ── */}
-                {isBillPaid ? (
+                {amountPaid > 0 && (
+                  <View style={[styles.breakdownRow, { marginTop: 8 }]}>
+                    <Text
+                      style={[styles.breakdownLabel, { color: THEME.success }]}
+                    >
+                      Already Paid
+                    </Text>
+                    <Text
+                      style={[styles.breakdownValue, { color: THEME.success }]}
+                    >
+                      -{currency}
+                      {amountPaid.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+
+                {amountDue > 0 && (
+                  <View style={styles.grandTotalRow}>
+                    <View>
+                      <Text
+                        style={[
+                          styles.grandTotalLabel,
+                          { color: THEME.danger, fontSize: 18 },
+                        ]}
+                      >
+                        Amount Due
+                      </Text>
+                    </View>
+                    <Text
+                      style={[
+                        styles.grandTotalValue,
+                        { color: THEME.danger, fontSize: 24 },
+                      ]}
+                    >
+                      {currency}
+                      {amountDue.toFixed(2)}
+                    </Text>
+                  </View>
+                )}
+
+                {isBillPaid || amountDue === 0 ? (
                   <TouchableOpacity
                     style={styles.primaryActionBtn}
                     onPress={handleDownloadBill}
@@ -817,11 +862,7 @@ export default function BillsTab() {
 }
 
 const styles = StyleSheet.create({
-  // ── BACKGROUND ──
-  mainWrapper: {
-    flex: 1,
-    backgroundColor: THEME.background,
-  },
+  mainWrapper: { flex: 1, backgroundColor: THEME.background },
   bgImage: {
     ...StyleSheet.absoluteFillObject,
     width: "100%",
@@ -831,16 +872,9 @@ const styles = StyleSheet.create({
   },
   bgOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(248, 250, 252, 0.88)", // Light Frosted Glass
+    backgroundColor: "rgba(248, 250, 252, 0.88)",
   },
-  container: {
-    flex: 1,
-    maxWidth: 480,
-    width: "100%",
-    alignSelf: "center",
-  },
-
-  // ── HEADER ──
+  container: { flex: 1, maxWidth: 480, width: "100%", alignSelf: "center" },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -856,28 +890,15 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "flex-start",
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: ANN.darkBlue,
-  },
+  headerTitle: { fontSize: 18, fontWeight: "900", color: ANN.darkBlue },
   refreshBtn: {
     width: 40,
     height: 40,
     justifyContent: "center",
     alignItems: "flex-end",
   },
-
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 40,
-  },
-
-  // ── PAGE TITLES ──
-  pageTitleContainer: {
-    alignItems: "center",
-    marginVertical: 20,
-  },
+  scrollContent: { paddingHorizontal: 16, paddingBottom: 40 },
+  pageTitleContainer: { alignItems: "center", marginVertical: 20 },
   pageTitle: {
     fontSize: 26,
     fontWeight: "900",
@@ -889,8 +910,6 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     textAlign: "center",
   },
-
-  // ── CARDS (GLASS EFFECT) ──
   card: {
     backgroundColor: "rgba(255, 255, 255, 0.8)",
     borderRadius: 16,
@@ -915,18 +934,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
   },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  tableBadge: {
-    fontSize: 13,
-    color: THEME.textSecondary,
-    fontWeight: "600",
-  },
-
-  // ── TABLE UI ──
+  cardTitle: { fontSize: 18, fontWeight: "800", color: "#111827" },
+  tableBadge: { fontSize: 13, color: THEME.textSecondary, fontWeight: "600" },
   tableHeader: {
     flexDirection: "row",
     backgroundColor: ANN.darkBlueLight,
@@ -941,9 +950,7 @@ const styles = StyleSheet.create({
     color: ANN.darkBlue,
     letterSpacing: 0.5,
   },
-  tableBody: {
-    paddingHorizontal: 4,
-  },
+  tableBody: { paddingHorizontal: 4 },
   itemRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -960,24 +967,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginRight: 10,
   },
-  itemNameText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#1f2937",
-    flex: 1,
-  },
-  itemQtyText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: THEME.textSecondary,
-  },
-  itemPriceText: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#111827",
-  },
-
-  // ── PAYMENT METHOD SELECTOR ──
+  itemNameText: { fontSize: 14, fontWeight: "700", color: "#1f2937", flex: 1 },
+  itemQtyText: { fontSize: 14, fontWeight: "600", color: THEME.textSecondary },
+  itemPriceText: { fontSize: 15, fontWeight: "800", color: "#111827" },
   methodToggleContainer: {
     flexDirection: "row",
     gap: 12,
@@ -1015,12 +1007,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: THEME.textSecondary,
   },
-  methodTextActive: {
-    color: ANN.darkBlue,
-    fontWeight: "800",
-  },
-
-  // ── QR DISPLAY BOX ──
+  methodTextActive: { color: ANN.darkBlue, fontWeight: "800" },
   qrDisplayBox: {
     backgroundColor: ANN.darkBlueLight,
     borderRadius: 12,
@@ -1052,12 +1039,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 20,
   },
-  openUpiBtnText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "bold",
-  },
-
+  openUpiBtnText: { color: "#fff", fontSize: 13, fontWeight: "bold" },
   cashDisplayBox: {
     backgroundColor: ANN.orangeLight,
     borderRadius: 12,
@@ -1077,8 +1059,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: "center",
   },
-
-  // ── BILL BREAKDOWN ──
   breakdownRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1089,11 +1069,7 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     fontWeight: "500",
   },
-  breakdownValue: {
-    fontSize: 14,
-    color: "#111827",
-    fontWeight: "700",
-  },
+  breakdownValue: { fontSize: 14, color: "#111827", fontWeight: "700" },
   dashedDivider: {
     borderBottomWidth: 1,
     borderBottomColor: "#cbd5e1",
@@ -1106,24 +1082,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 24,
   },
-  grandTotalLabel: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#111827",
-  },
+  grandTotalLabel: { fontSize: 16, fontWeight: "800", color: "#111827" },
   inclusiveText: {
     fontSize: 10,
     color: THEME.textSecondary,
     fontStyle: "italic",
     marginTop: 2,
   },
-  grandTotalValue: {
-    fontSize: 28,
-    fontWeight: "900",
-    color: ANN.darkBlue,
-  },
-
-  // ── ACTION BUTTONS ──
+  grandTotalValue: { fontSize: 28, fontWeight: "900", color: ANN.darkBlue },
   primaryActionBtn: {
     backgroundColor: ANN.darkBlue,
     flexDirection: "row",
@@ -1138,11 +1104,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  primaryActionBtnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "800",
-  },
+  primaryActionBtnText: { color: "#fff", fontSize: 16, fontWeight: "800" },
   pendingActionBox: {
     backgroundColor: ANN.orangeLight,
     flexDirection: "row",
@@ -1153,12 +1115,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: ANN.orange,
   },
-  pendingActionText: {
-    color: ANN.red,
-    fontSize: 14,
-    fontWeight: "bold",
-  },
-
+  pendingActionText: { color: ANN.red, fontSize: 14, fontWeight: "bold" },
   secureTransactionRow: {
     flexDirection: "row",
     justifyContent: "center",
@@ -1172,11 +1129,9 @@ const styles = StyleSheet.create({
     color: THEME.textSecondary,
     letterSpacing: 0.5,
   },
-
-  // ── INFO BANNER ──
   infoBanner: {
     flexDirection: "row",
-    backgroundColor: "rgba(69, 106, 186, 0.1)", // Light Blue Tint
+    backgroundColor: "rgba(69, 106, 186, 0.1)",
     padding: 16,
     borderRadius: 12,
     alignItems: "flex-start",
@@ -1192,8 +1147,6 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontWeight: "500",
   },
-
-  // ── EMPTY STATES ──
   emptyState: {
     flex: 1,
     justifyContent: "center",
@@ -1221,9 +1174,5 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 12,
   },
-  askBillBtnText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 15,
-  },
+  askBillBtnText: { color: "#fff", fontWeight: "bold", fontSize: 15 },
 });

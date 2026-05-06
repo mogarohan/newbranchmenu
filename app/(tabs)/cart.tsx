@@ -7,6 +7,7 @@ import {
   Dimensions,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -16,6 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import QRCode from "react-native-qrcode-svg"; // 👈 ADDED
 import uuid from "react-native-uuid";
 import { THEME } from "../../constants/theme";
 import { useSession } from "../../context/SessionContext";
@@ -23,7 +25,6 @@ import { OrderService } from "../../services/order.service";
 
 const { width } = Dimensions.get("window");
 
-// ─── Ann Sathi Brand Colors ───────────────────────────────────────────────────
 const ANN = {
   orange: "#fe9a54",
   red: "#f16b3f",
@@ -34,7 +35,6 @@ const ANN = {
   blueLight: "#eef2fb",
   darkBlueLight: "#e8ecf7",
 };
-// ─────────────────────────────────────────────────────────────────────────────
 
 export default function CartTab() {
   const {
@@ -54,13 +54,40 @@ export default function CartTab() {
   const [orderNote, setOrderNote] = useState("");
   const [pendingKey, setPendingKey] = useState<string | null>(null);
 
+  // 👇 NEW: Payment Modal State
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+
   const currency = menuData?.restaurant?.currency_symbol || "₹";
+  const isPayFirst = menuData?.restaurant?.is_pay_first === true; // Check Model
+  const upiId = menuData?.restaurant?.upi_id || "";
+  const restaurantName = menuData?.restaurant?.name || "Restaurant";
+
+  // Generate UPI String
+  const pa = encodeURIComponent(upiId);
+  const pn = encodeURIComponent(restaurantName);
+  const tn = encodeURIComponent(`Order for Table ${tableData?.tId || ""}`);
+  const am = cartTotalPrice.toFixed(2);
+  const upiString = `upi://pay?pa=${pa}&pn=${pn}&tn=${tn}&am=${am}&cu=INR`;
+
+  // 👇 The missing function you needed
+  const handleItemNoteChange = (id: number, text: string) => {
+    setItemNotes((prev) => ({ ...prev, [id]: text }));
+  };
 
   useEffect(() => {
     setPendingKey(null);
   }, [cart, itemNotes, orderNote]);
 
-  const handlePlaceOrder = async () => {
+  // Triggered when user clicks "Confirm & Place Order"
+  const handleProceed = () => {
+    if (isPayFirst) {
+      setShowPaymentModal(true); // Open modal first!
+    } else {
+      handlePlaceOrder("pending"); // Normal flow
+    }
+  };
+
+  const handlePlaceOrder = async (paymentMethod: string) => {
     if (placing) return;
     if (!sessionToken || cartTotalQty === 0) return;
     if (!tableData) {
@@ -89,14 +116,16 @@ export default function CartTab() {
         payload,
         orderNote.trim(),
         idempotencyKey,
+        paymentMethod, // 👈 Send the method to the API
       );
 
       clearCart();
       setItemNotes({});
       setOrderNote("");
       setPendingKey(null);
+      setShowPaymentModal(false);
 
-      // 👇 THE FIX: Allow React state to settle before unmounting the screen
+      // Navigate to Orders Tab directly. The manager is now handling the verification.
       setTimeout(() => {
         router.push("/(tabs)/orders");
       }, 100);
@@ -108,10 +137,7 @@ export default function CartTab() {
         err?.status === 404 ||
         err?.message?.toLowerCase().includes("expired")
       ) {
-        Alert.alert(
-          "Session Ended",
-          "Your table session has been closed by the restaurant.",
-        );
+        Alert.alert("Session Ended", "Your table session has been closed.");
         await clearSession();
         router.replace("/");
         return;
@@ -124,10 +150,6 @@ export default function CartTab() {
     } finally {
       setPlacing(false);
     }
-  };
-
-  const handleItemNoteChange = (id: number, text: string) => {
-    setItemNotes((prev) => ({ ...prev, [id]: text }));
   };
 
   const confirmClearCart = () => {
@@ -153,7 +175,6 @@ export default function CartTab() {
           style={styles.bgImage}
         />
         <View style={styles.bgOverlay} />
-
         <SafeAreaView style={styles.container}>
           <View style={styles.header}>
             <Text style={styles.headerTitle}>Your Cart</Text>
@@ -229,7 +250,6 @@ export default function CartTab() {
                         {(item.price * item.qty).toFixed(2)}
                       </Text>
                     </View>
-
                     <View style={styles.controlsContainer}>
                       <TouchableOpacity
                         onPress={() =>
@@ -239,7 +259,6 @@ export default function CartTab() {
                       >
                         <Ionicons name="trash" size={16} color={THEME.danger} />
                       </TouchableOpacity>
-
                       <View style={styles.qtySelector}>
                         <TouchableOpacity
                           onPress={() =>
@@ -265,7 +284,6 @@ export default function CartTab() {
                       </View>
                     </View>
                   </View>
-
                   <View style={styles.noteInputContainer}>
                     <MaterialIcons
                       name="edit-note"
@@ -308,7 +326,7 @@ export default function CartTab() {
                   styles.noteInput,
                   { height: 60, textAlignVertical: "top", paddingTop: 0 },
                 ]}
-                placeholder="Any general requests for the kitchen? (e.g. Extra plates, quick service)"
+                placeholder="Any general requests for the kitchen?"
                 placeholderTextColor={THEME.textSecondary}
                 value={orderNote}
                 onChangeText={setOrderNote}
@@ -327,14 +345,11 @@ export default function CartTab() {
                   {cartTotalPrice.toFixed(2)}
                 </Text>
               </View>
-              <Text style={styles.taxDisclaimerText}>
-                *Taxes & fees calculated at checkout
-              </Text>
             </View>
 
             <TouchableOpacity
               style={[styles.primaryBtn, placing && { opacity: 0.7 }]}
-              onPress={handlePlaceOrder}
+              onPress={handleProceed}
               disabled={placing}
             >
               {placing ? (
@@ -342,12 +357,14 @@ export default function CartTab() {
               ) : (
                 <>
                   <Ionicons
-                    name="checkmark-circle-outline"
+                    name={
+                      isPayFirst ? "wallet-outline" : "checkmark-circle-outline"
+                    }
                     size={22}
                     color="white"
                   />
                   <Text style={styles.primaryBtnText}>
-                    Confirm & Place Order
+                    {isPayFirst ? "Proceed to Pay" : "Confirm & Place Order"}
                   </Text>
                 </>
               )}
@@ -355,26 +372,137 @@ export default function CartTab() {
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
+
+      {/* 👇 NEW: PAYMENT MODAL FOR PAY-FIRST RESTAURANTS 👇 */}
+      <Modal visible={showPaymentModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Complete Payment</Text>
+              <TouchableOpacity onPress={() => setShowPaymentModal(false)}>
+                <MaterialIcons
+                  name="cancel"
+                  size={28}
+                  color={THEME.textSecondary}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text
+                style={{
+                  textAlign: "center",
+                  fontSize: 14,
+                  color: THEME.textSecondary,
+                  marginBottom: 8,
+                }}
+              >
+                Amount to Pay
+              </Text>
+              <Text
+                style={{
+                  textAlign: "center",
+                  fontSize: 36,
+                  fontWeight: "900",
+                  color: ANN.red,
+                  marginBottom: 20,
+                }}
+              >
+                {currency}
+                {cartTotalPrice.toFixed(2)}
+              </Text>
+
+              {upiId ? (
+                <View style={styles.qrDisplayBox}>
+                  <View style={styles.qrInner}>
+                    <QRCode value={upiString} size={150} />
+                  </View>
+                  <Text style={styles.qrScanText}>SCAN TO PAY VIA UPI</Text>
+                </View>
+              ) : (
+                <View style={styles.cashDisplayBox}>
+                  <Ionicons
+                    name="wallet-outline"
+                    size={40}
+                    color={ANN.orange}
+                  />
+                  <Text style={styles.cashScanText}>PAY AT COUNTER</Text>
+                </View>
+              )}
+
+              <Text
+                style={{
+                  textAlign: "center",
+                  fontSize: 13,
+                  color: THEME.textSecondary,
+                  marginVertical: 20,
+                  paddingHorizontal: 10,
+                }}
+              >
+                Please make the payment. Once done, click the button below to
+                send the order to the kitchen.
+              </Text>
+
+              <TouchableOpacity
+                style={[
+                  styles.primaryBtn,
+                  { backgroundColor: THEME.success, marginBottom: 12 },
+                ]}
+                onPress={() => handlePlaceOrder("upi")}
+                disabled={placing}
+              >
+                {placing ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryBtnText}>I have Paid via UPI</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.primaryBtn,
+                  {
+                    backgroundColor: THEME.cardBg,
+                    borderWidth: 1,
+                    borderColor: THEME.textSecondary,
+                  },
+                ]}
+                onPress={() => handlePlaceOrder("cash")}
+                disabled={placing}
+              >
+                {placing ? (
+                  <ActivityIndicator color={THEME.textSecondary} />
+                ) : (
+                  <Text
+                    style={[
+                      styles.primaryBtnText,
+                      { color: THEME.textPrimary },
+                    ]}
+                  >
+                    Pay Cash at Counter
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // ── BACKGROUND STYLES ──
-  mainWrapper: {
-    flex: 1,
-    backgroundColor: THEME.background,
-  },
+  mainWrapper: { flex: 1, backgroundColor: THEME.background },
   bgImage: {
     ...StyleSheet.absoluteFillObject,
     width: "100%",
     height: "100%",
     resizeMode: "cover",
-    opacity: 0.15, // Glass effect opacity
+    opacity: 0.15,
   },
   bgOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(255, 255, 255, 0.85)", // Frosted overlay
+    backgroundColor: "rgba(255, 255, 255, 0.85)",
   },
   container: {
     flex: 1,
@@ -430,8 +558,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(42, 71, 149, 0.1)",
     marginVertical: 15,
   },
-
-  // ── CART ITEM CARD (GLASS EFFECT) ──
   cartItemCard: {
     backgroundColor: "rgba(255, 255, 255, 0.75)",
     borderRadius: 16,
@@ -463,16 +589,8 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   itemPrice: { fontSize: 16, fontWeight: "900", color: ANN.red },
-  controlsContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  deleteItemBtn: {
-    padding: 6,
-    backgroundColor: ANN.redLight,
-    borderRadius: 8,
-  },
+  controlsContainer: { flexDirection: "row", alignItems: "center", gap: 12 },
+  deleteItemBtn: { padding: 6, backgroundColor: ANN.redLight, borderRadius: 8 },
   qtySelector: {
     flexDirection: "row",
     alignItems: "center",
@@ -505,17 +623,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(42, 71, 149, 0.2)",
   },
-  noteIcon: {
-    marginRight: 8,
-  },
+  noteIcon: { marginRight: 8 },
   noteInput: {
     flex: 1,
     paddingVertical: 12,
     fontSize: 14,
     color: THEME.textPrimary,
   },
-
-  // ── FOOTER ──
   footer: {
     position: "absolute",
     bottom: 0,
@@ -538,10 +652,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  summaryBox: {
-    marginBottom: 20,
-    paddingHorizontal: 4,
-  },
+  summaryBox: { marginBottom: 20, paddingHorizontal: 4 },
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -550,11 +661,7 @@ const styles = StyleSheet.create({
   },
   totalLabel: { fontSize: 16, fontWeight: "bold", color: ANN.darkBlue },
   totalValue: { fontSize: 26, fontWeight: "900", color: ANN.red },
-  taxDisclaimerText: {
-    fontSize: 11,
-    color: "#94A3B8",
-    fontStyle: "italic",
-  },
+  taxDisclaimerText: { fontSize: 11, color: "#94A3B8", fontStyle: "italic" },
   primaryBtn: {
     backgroundColor: ANN.orange,
     padding: 18,
@@ -574,8 +681,6 @@ const styles = StyleSheet.create({
     fontSize: 17,
     letterSpacing: 0.5,
   },
-
-  // ── EMPTY STATE ──
   emptyState: {
     flex: 1,
     justifyContent: "center",
@@ -617,4 +722,61 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
   },
   browseBtnText: { color: "#FFF", fontWeight: "bold", fontSize: 16 },
+
+  // MODAL STYLES
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(28,28,30,0.7)",
+    justifyContent: "flex-end",
+  },
+  modalContent: {
+    backgroundColor: "white",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    maxHeight: "90%",
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderColor: THEME.border,
+  },
+  modalTitle: { fontSize: 20, fontWeight: "900", color: ANN.darkBlue },
+  qrDisplayBox: {
+    backgroundColor: ANN.darkBlueLight,
+    borderRadius: 12,
+    padding: 20,
+    alignItems: "center",
+    marginVertical: 10,
+  },
+  qrInner: {
+    backgroundColor: "#fff",
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  qrScanText: {
+    fontSize: 13,
+    fontWeight: "bold",
+    color: THEME.textSecondary,
+    letterSpacing: 1,
+  },
+  cashDisplayBox: {
+    backgroundColor: ANN.orangeLight,
+    borderRadius: 12,
+    padding: 30,
+    alignItems: "center",
+    marginVertical: 10,
+  },
+  cashScanText: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: ANN.red,
+    letterSpacing: 1,
+    marginTop: 12,
+  },
 });
